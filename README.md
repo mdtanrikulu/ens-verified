@@ -38,15 +38,26 @@ contentKey = keccak256(
 
 Copying a content key to a different resolver or name will fail verification because the recomputed key won't match.
 
-## Resolver Text Records
+## Resolver Text Record
 
-The controller writes three namespaced text records:
+The controller writes a single namespaced text record per verifiable record:
 
-| Key | Value |
-|-----|-------|
-| `vr:{issuerAddress}:{recordType}` | Content key (hex-encoded bytes32) |
-| `vr:{issuerAddress}:{recordType}:uri` | Content URI (IPFS CID or HTTPS URL) |
-| `vr:{issuerAddress}:{recordType}:expires` | Expiration timestamp |
+```
+Key:   vr:{issuerAddress}:{recordType}
+Value: {contentKey} {expires} {contentURI}
+```
+
+The value is three space-delimited fields:
+
+| Field | Format | Example |
+|-------|--------|---------|
+| `contentKey` | hex-encoded bytes32 (66 chars) | `0x4f71c5ad...e3694e` |
+| `expires` | decimal unix timestamp, `0` = no expiration | `1735689600` or `0` |
+| `contentURI` | IPFS CID or HTTPS URL | `ipfs://QmTest` |
+
+Expiry is optional — issuers set `expires = 0` for records that don't expire. Verifiers treat `0` as "valid indefinitely".
+
+One `setText` call to write, one `text()` call to read, one clear to revoke.
 
 ## Verification Flows
 
@@ -60,36 +71,35 @@ Verifier                          Chain                     Issuer Storage
    │─── resolve ENS name ──────────►│                            │
    │◄── resolver address ───────────│                            │
    │                                │                            │
-   │─── read text record ──────────►│                            │
-   │    vr:{issuer}:{type}          │                            │
-   │◄── contentKey ─────────────────│                            │
-   │                                │                            │
-   │─── read text record ──────────►│                            │
-   │    vr:{issuer}:{type}:uri      │                            │
-   │◄── contentURI ─────────────────│                            │
+   │─── text(vr:{issuer}:{type}) ──►│                            │
+   │◄── "{contentKey} {exp} {uri}" ─│                            │
    │                                │                            │
    │─── fetch proof + credential ───┼───────────────────────────►│
    │◄── { attestation, payload } ───┼────────────────────────────│
    │                                │                            │
    │  ┌─────────────────────────────┤                            │
-   │  │ 1. Recompute contentKey     │                            │
+   │  │ 1. Parse contentKey,        │                            │
+   │  │    expires, contentURI      │                            │
+   │  │    from the text value.     │                            │
+   │  │                             │                            │
+   │  │ 2. Recompute contentKey     │                            │
    │  │    from public inputs.      │                            │
    │  │    Must match on-chain key. │                            │
    │  │                             │                            │
-   │  │ 2. Verify proof:            │                            │
+   │  │ 3. Verify proof:            │                            │
    │  │    ECDSA ► ecrecover        │                            │
    │  │      locally (free).        │                            │
    │  │    ZK ► call issuer's       │                            │
    │  │      verifier contract      │                            │
    │  │      (view call, no gas).   │                            │
    │  │                             │                            │
-   │  │ 3. Check issuer status:     │                            │
+   │  │ 4. Check issuer status:     │                            │
    │  │    isActiveIssuer() on      │                            │
    │  │    IssuerRegistry           │                            │
    │  │    (view call, no gas).     │                            │
    │  │                             │                            │
-   │  │ 4. Check expiration from    │                            │
-   │  │    text record or payload.  │                            │
+   │  │ 5. Check expires against    │                            │
+   │  │    current time.            │                            │
    │  └─────────────────────────────┤                            │
    │                                │                            │
    │  result: valid / invalid       │                            │
@@ -98,15 +108,14 @@ Verifier                          Chain                     Issuer Storage
 Steps:
 
 1. **Resolve** the ENS name via the Universal Resolver to get the resolver address.
-2. **Read** the `vr:{issuer}:{type}` text record to get the content key.
-3. **Read** the `vr:{issuer}:{type}:uri` text record to get the content URI.
-4. **Fetch** the full credential and proof from the content URI.
-5. **Recompute** the content key from the fetched data's public inputs (user signature, ENS name, resolver address, record data hash, issuer address). It must match the on-chain content key.
-6. **Verify the proof:**
+2. **Read** the `vr:{issuer}:{type}` text record. Parse the three space-delimited fields: content key, expires, content URI.
+3. **Fetch** the full credential and proof from the content URI.
+4. **Recompute** the content key from the fetched data's public inputs (user signature, ENS name, resolver address, record data hash, issuer address). It must match the on-chain content key.
+5. **Verify the proof:**
    - ECDSA attestation: recover the signer from the attestation signature and confirm it matches the issuer address. This is pure cryptography — no gas cost.
    - ZK proof: call the issuer's registered verifier contract with the proof and public inputs. This is a `view` call — no gas cost.
-7. **Check issuer status** by calling `IssuerRegistry.isActiveIssuer()` — a `view` call.
-8. **Check expiration** from the `:expires` text record or the credential payload.
+6. **Check issuer status** by calling `IssuerRegistry.isActiveIssuer()` — a `view` call.
+7. **Check expiration** against the current time.
 
 If all checks pass, the record is valid.
 
@@ -115,35 +124,32 @@ If all checks pass, the record is valid.
 For smart contracts that need to verify a record within a transaction (e.g. gating access, conditional logic).
 
 ```
-Calling Contract                  Controller              IssuerRegistry
-   │                                  │                        │
-   │─── computeContentKey() ─────────►│                        │
-   │◄── contentKey ───────────────────│                        │
-   │                                  │                        │
-   │─── verifyContentKey() ──────────►│                        │
-   │    (contentKey, request, sig)    │                        │
-   │◄── true / false ─────────────────│                        │
-   │                                  │                        │
-   │─── isActiveIssuer() ─────────────┼───────────────────────►│
-   │◄── true / false ─────────────────┼────────────────────────│
-   │                                  │                        │
-   │─── read text() on resolver ──────►                        │
-   │◄── contentKey from resolver ──────                        │
-   │                                  │                        │
-   │  ┌───────────────────────────────┤                        │
-   │  │ Compare returned contentKey   │                        │
-   │  │ with resolver value.          │                        │
-   │  │ If equal + issuer active      │                        │
-   │  │ + not expired → valid.        │                        │
-   │  └───────────────────────────────┤                        │
+Calling Contract                  Controller    Resolver    IssuerRegistry
+   │                                  │             │              │
+   │─── text(vr:{issuer}:{type}) ─────┼────────────►│              │
+   │◄── "{key} {exp} {uri}" ──────────┼─────────────│              │
+   │                                  │             │              │
+   │─── verifyContentKey() ──────────►│             │              │
+   │    (contentKey, request, sig)    │             │              │
+   │◄── true / false ─────────────────│             │              │
+   │                                  │             │              │
+   │─── isActiveIssuer() ─────────────┼─────────────┼─────────────►│
+   │◄── true / false ─────────────────┼─────────────┼──────────────│
+   │                                  │             │              │
+   │  ┌───────────────────────────────┤             │              │
+   │  │ Parse contentKey from value.  │             │              │
+   │  │ Compare with recomputed key.  │             │              │
+   │  │ If equal + issuer active      │             │              │
+   │  │ + not expired → valid.        │             │              │
+   │  └───────────────────────────────┤             │              │
 ```
 
 Steps:
 
-1. **Read** the content key from the resolver's text record `vr:{issuer}:{type}`.
-2. **Recompute** the content key by calling `VerifiableRecordController.computeContentKey(request, userSignature)` with the known public inputs. Compare it to the stored value — they must match.
+1. **Read** the `vr:{issuer}:{type}` text record from the resolver. Parse the space-delimited value to extract content key, expiration, and content URI.
+2. **Recompute** the content key by calling `VerifiableRecordController.computeContentKey(request, userSignature)` with the known public inputs. Compare it to the parsed value — they must match.
 3. **Check issuer status** by calling `IssuerRegistry.isActiveIssuer(issuer)`.
-4. **Check expiration** by reading the `:expires` text record or comparing against `block.timestamp`.
+4. **Check expiration** against `block.timestamp`.
 
 For on-chain verification the calling contract needs access to the original `RecordRequest` and `userSignature`. These can be passed as calldata by the transaction sender, or retrieved from an off-chain source and submitted as part of the transaction. The content key recomputation and comparison is the core integrity check — if it matches the resolver value, the record was legitimately issued.
 

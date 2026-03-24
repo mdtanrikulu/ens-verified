@@ -14,6 +14,7 @@ import {MockResolver} from "./mocks/MockResolver.sol";
 
 contract VerifiableRecordControllerTest is Test {
     using Strings for address;
+    using Strings for uint256;
 
     IssuerRegistry public registry;
     VerifiableRecordController public controller;
@@ -122,10 +123,12 @@ contract VerifiableRecordControllerTest is Test {
 
         assertEq(returnedKey, expectedKey);
 
-        // Verify text records
-        string memory baseKey = string.concat("vr:", issuer.toHexString(), ":", recordType);
-        assertTrue(bytes(resolverAlice.text(node, baseKey)).length > 0);
-        assertEq(resolverAlice.text(node, string.concat(baseKey, ":uri")), "ipfs://QmTest");
+        // Verify single packed text record: "{contentKey} {expires} {contentURI}"
+        string memory key = string.concat("vr:", issuer.toHexString(), ":", recordType);
+        string memory expected = string.concat(
+            uint256(expectedKey).toHexString(32), " ", uint256(defaultExpiry).toString(), " ", "ipfs://QmTest"
+        );
+        assertEq(resolverAlice.text(node, key), expected);
     }
 
     // ── Authorization failures ──────────────────────────────────────────
@@ -191,6 +194,22 @@ contract VerifiableRecordControllerTest is Test {
         vm.prank(issuer);
         vm.expectRevert(VerifiableRecordController.InvalidNonce.selector);
         controller.issueRecord(request, userSig, "ipfs://QmTest");
+    }
+
+    // ── Optional expiry ──────────────────────────────────────────────────
+
+    function test_issueRecord_noExpiry() public {
+        IVerifiableRecordController.RecordRequest memory request = _buildRequest();
+        request.expires = 0; // no expiration
+        bytes memory userSig = _signRequest(request, userPrivateKey);
+
+        vm.prank(issuer);
+        bytes32 contentKey = controller.issueRecord(request, userSig, "ipfs://QmNoExpiry");
+
+        string memory key = string.concat("vr:", issuer.toHexString(), ":", recordType);
+        string memory expected =
+            string.concat(uint256(contentKey).toHexString(32), " ", uint256(0).toString(), " ", "ipfs://QmNoExpiry");
+        assertEq(resolverAlice.text(node, key), expected);
     }
 
     // ── Content key properties ──────────────────────────────────────────
@@ -265,15 +284,13 @@ contract VerifiableRecordControllerTest is Test {
     function test_revokeRecord_byIssuer() public {
         _issueDefault();
 
-        string memory baseKey = string.concat("vr:", issuer.toHexString(), ":", recordType);
-        assertTrue(bytes(resolverAlice.text(node, baseKey)).length > 0);
+        string memory key = string.concat("vr:", issuer.toHexString(), ":", recordType);
+        assertTrue(bytes(resolverAlice.text(node, key)).length > 0);
 
         vm.prank(issuer);
         controller.revokeRecord(node, recordType);
 
-        assertEq(resolverAlice.text(node, baseKey), "");
-        assertEq(resolverAlice.text(node, string.concat(baseKey, ":uri")), "");
-        assertEq(resolverAlice.text(node, string.concat(baseKey, ":expires")), "");
+        assertEq(resolverAlice.text(node, key), "");
     }
 
     function test_Revert_revokeRecord_byNonIssuer() public {

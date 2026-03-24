@@ -65,7 +65,8 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
         if (request.nonce != nonces[signer]) revert InvalidNonce();
         nonces[signer]++;
 
-        if (request.expires <= block.timestamp) revert Expired();
+        // expires == 0 means no expiration
+        if (request.expires != 0 && request.expires <= block.timestamp) revert Expired();
 
         contentKey = _deriveContentKey(request, userSignature);
 
@@ -84,11 +85,7 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
         if (!record.exists) revert RecordNotFound();
 
         ITextResolver resolver = ITextResolver(record.resolver);
-        string memory baseKey = _buildBaseKey(msg.sender, recordType);
-
-        resolver.setText(node, baseKey, "");
-        resolver.setText(node, string.concat(baseKey, ":uri"), "");
-        resolver.setText(node, string.concat(baseKey, ":expires"), "");
+        resolver.setText(node, _buildRecordKey(msg.sender, recordType), "");
 
         delete _issuedRecords[node][msg.sender][typeHash];
 
@@ -151,14 +148,15 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
 
     function _writeToResolver(RecordRequest calldata request, bytes32 contentKey, string calldata contentURI) internal {
         ITextResolver resolver = ITextResolver(request.resolver);
-        string memory baseKey = _buildBaseKey(request.issuer, request.recordType);
-
-        resolver.setText(request.node, baseKey, uint256(contentKey).toHexString(32));
-        resolver.setText(request.node, string.concat(baseKey, ":uri"), contentURI);
-        resolver.setText(request.node, string.concat(baseKey, ":expires"), uint256(request.expires).toString());
+        string memory key = _buildRecordKey(request.issuer, request.recordType);
+        // Format: "{contentKey} {expires} {contentURI}" — expires is "0" when unset
+        string memory value = string.concat(
+            uint256(contentKey).toHexString(32), " ", uint256(request.expires).toString(), " ", contentURI
+        );
+        resolver.setText(request.node, key, value);
     }
 
-    function _buildBaseKey(address issuer, string calldata recordType) internal pure returns (string memory) {
+    function _buildRecordKey(address issuer, string calldata recordType) internal pure returns (string memory) {
         return string.concat("vr:", issuer.toHexString(), ":", recordType);
     }
 }
