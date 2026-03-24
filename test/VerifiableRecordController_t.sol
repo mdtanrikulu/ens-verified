@@ -44,13 +44,7 @@ contract VerifiableRecordControllerTest is Test {
         resolverMallory = new MockResolver();
 
         registry.registerIssuer(
-            issuer,
-            "Test Issuer",
-            1,
-            IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION,
-            defaultExpiry,
-            address(0),
-            ""
+            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
         );
     }
 

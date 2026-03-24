@@ -131,11 +131,7 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
         );
     }
 
-    function _recoverSigner(RecordRequest calldata request, bytes calldata signature)
-        internal
-        view
-        returns (address)
-    {
+    function _recoverSigner(RecordRequest calldata request, bytes calldata signature) internal view returns (address) {
         bytes32 structHash = keccak256(
             abi.encode(
                 RECORD_REQUEST_TYPEHASH,
@@ -153,9 +149,7 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
         return ECDSA.recover(digest, signature);
     }
 
-    function _writeToResolver(RecordRequest calldata request, bytes32 contentKey, string calldata contentURI)
-        internal
-    {
+    function _writeToResolver(RecordRequest calldata request, bytes32 contentKey, string calldata contentURI) internal {
         ITextResolver resolver = ITextResolver(request.resolver);
         string memory baseKey = _buildBaseKey(request.issuer, request.recordType);
 

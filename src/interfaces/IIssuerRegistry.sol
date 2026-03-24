@@ -4,11 +4,7 @@ pragma solidity ^0.8.20;
 interface IIssuerRegistry {
     /// @notice Emitted when an issuer is registered
     event IssuerRegistered(
-        address indexed issuer,
-        string name,
-        uint256 supportedRecordTypes,
-        uint8 verificationMode,
-        uint64 expires
+        address indexed issuer, string name, uint256 supportedRecordTypes, uint8 verificationMode, uint64 expires
     );
 
     /// @notice Emitted when an issuer is revoked

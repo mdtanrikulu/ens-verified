@@ -49,13 +49,7 @@ contract IssuerRegistryTest is Test {
         vm.prank(nonAdmin);
         vm.expectRevert(IssuerRegistry.Unauthorized.selector);
         registry.registerIssuer(
-            issuer,
-            "Test Issuer",
-            1,
-            IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION,
-            defaultExpiry,
-            address(0),
-            ""
+            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
         );
     }
 
