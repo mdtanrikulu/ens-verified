@@ -18,8 +18,6 @@ export interface ProofBundle {
   userSignature: Hex;
   contentKey: Hex;
   attestation: Hex;
-  /** SDK-internal: tracks where the bundle was fetched from (issuer's specificationURI) */
-  contentURI: string;
 }
 
 /** Parsed on-chain text record value: "{contentKey} {expires}" */

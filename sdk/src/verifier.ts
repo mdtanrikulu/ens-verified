@@ -51,16 +51,16 @@ export function parseRecordValue(value: string): ParsedRecordValue {
 }
 
 /**
- * Fetches and parses a ProofBundle from a content URI.
+ * Fetches and parses a ProofBundle from the issuer's specificationURI.
  * Supports https:// and any other URI scheme handled by the global fetch().
  */
 export async function fetchProofBundle(
-  contentURI: string
+  specificationURI: string
 ): Promise<ProofBundle> {
-  const response = await fetch(contentURI);
+  const response = await fetch(specificationURI);
   if (!response.ok) {
     throw new Error(
-      `Failed to fetch proof bundle from ${contentURI}: ${response.status} ${response.statusText}`
+      `Failed to fetch proof bundle from ${specificationURI}: ${response.status} ${response.statusText}`
     );
   }
 
@@ -88,7 +88,6 @@ export async function fetchProofBundle(
     userSignature: data.userSignature as Hex,
     contentKey: data.contentKey as Hex,
     attestation: (data.attestation ?? "0x") as Hex,
-    contentURI: (data.contentURI ?? contentURI) as string,
   };
 
   return bundle;

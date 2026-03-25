@@ -66,11 +66,13 @@ const attestation = await signAttestation(issuerWalletClient, request.recordData
 
 // Build the proof bundle
 const contentKey = computeContentKey(request, userSignature);
-const bundle = createProofBundle(request, userSignature, contentKey, attestation, "https://issuer.example/proofs/alice");
+const bundle = createProofBundle(request, userSignature, contentKey, attestation);
 
 // Host this JSON at the issuer's specificationURI (registered in IssuerRegistry)
 await uploadToStorage(JSON.stringify(bundle));
 ```
+
+The proof bundle lives at the issuer's `specificationURI` registered in `IssuerRegistry`. Verifiers get that URI from the registry — it's never stored on-chain in the text record.
 
 ---
 
@@ -194,7 +196,7 @@ const { valid, errors } = validateProofBundle(bundle);
 |------|-------|-----|
 | `contentKey` + `expires` | ENS text record | Minimal on-chain footprint. The content key is the cryptographic anchor. |
 | Proof bundle | Issuer's `specificationURI` | Full attestation data. Too expensive to store on-chain. |
-| Issuer info + proof URI | IssuerRegistry | DAO-governed. Verifier queries this first. |
+| Issuer info + `specificationURI` | IssuerRegistry | DAO-governed. Verifier queries this first to get proof bundle location. |
 | User's EIP-712 signature | Proof bundle (off-chain) | Proves user consent. Used to recompute content key. |
 
 ---

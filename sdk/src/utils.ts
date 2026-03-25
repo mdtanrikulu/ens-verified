@@ -75,15 +75,13 @@ export function createProofBundle(
   request: RecordRequest,
   userSignature: Hex,
   contentKey: Hex,
-  attestation: Hex,
-  contentURI: string
+  attestation: Hex
 ): ProofBundle {
   return {
     request,
     userSignature,
     contentKey,
     attestation,
-    contentURI,
   };
 }
 
@@ -137,11 +135,6 @@ export function validateProofBundle(bundle: ProofBundle): {
   // Check attestation
   if (!isHex(bundle.attestation) || bundle.attestation.length < 4) {
     errors.push("Invalid attestation: expected non-empty hex");
-  }
-
-  // Check contentURI
-  if (!bundle.contentURI || bundle.contentURI.length === 0) {
-    errors.push("Missing contentURI");
   }
 
   return { valid: errors.length === 0, errors };
