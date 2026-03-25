@@ -108,7 +108,7 @@ contract VerifiableRecordControllerTest is Test {
         contentKey = controller.computeContentKey(request, userSig);
 
         vm.prank(issuer);
-        controller.issueRecord(request, userSig, "ipfs://QmTest");
+        controller.issueRecord(request, userSig);
     }
 
     // ── Happy path ──────────────────────────────────────────────────────
@@ -119,14 +119,14 @@ contract VerifiableRecordControllerTest is Test {
         bytes32 expectedKey = controller.computeContentKey(request, userSig);
 
         vm.prank(issuer);
-        bytes32 returnedKey = controller.issueRecord(request, userSig, "ipfs://QmTest");
+        bytes32 returnedKey = controller.issueRecord(request, userSig);
 
         assertEq(returnedKey, expectedKey);
 
-        // Verify single packed text record: "{contentKey} {expires} {contentURI}"
+        // Verify text record: "{contentKey} {expires}"
         string memory key = string.concat("vr:", issuer.toHexString(), ":", recordType);
         string memory expected = string.concat(
-            uint256(expectedKey).toHexString(32), " ", uint256(defaultExpiry).toString(), " ", "ipfs://QmTest"
+            uint256(expectedKey).toHexString(32), " ", uint256(defaultExpiry).toString()
         );
         assertEq(resolverAlice.text(node, key), expected);
     }
@@ -140,7 +140,7 @@ contract VerifiableRecordControllerTest is Test {
 
         vm.prank(nonIssuer);
         vm.expectRevert(VerifiableRecordController.UnauthorizedIssuer.selector);
-        controller.issueRecord(request, userSig, "");
+        controller.issueRecord(request, userSig);
     }
 
     function test_Revert_issueRecord_issuerMismatch() public {
@@ -153,7 +153,7 @@ contract VerifiableRecordControllerTest is Test {
 
         vm.prank(nonIssuer);
         vm.expectRevert(VerifiableRecordController.IssuerMismatch.selector);
-        controller.issueRecord(request, userSig, "");
+        controller.issueRecord(request, userSig);
     }
 
     function test_Revert_issueRecord_expiredIssuer() public {
@@ -164,7 +164,7 @@ contract VerifiableRecordControllerTest is Test {
 
         vm.prank(issuer);
         vm.expectRevert(VerifiableRecordController.UnauthorizedIssuer.selector);
-        controller.issueRecord(request, userSig, "");
+        controller.issueRecord(request, userSig);
     }
 
     // ── Signature failures ──────────────────────────────────────────────
@@ -179,7 +179,7 @@ contract VerifiableRecordControllerTest is Test {
 
         vm.prank(issuer);
         vm.expectRevert(VerifiableRecordController.InvalidNonce.selector);
-        controller.issueRecord(request, badSig, "");
+        controller.issueRecord(request, badSig);
     }
 
     // ── Replay protection ───────────────────────────────────────────────
@@ -189,11 +189,11 @@ contract VerifiableRecordControllerTest is Test {
         bytes memory userSig = _signRequest(request, userPrivateKey);
 
         vm.prank(issuer);
-        controller.issueRecord(request, userSig, "ipfs://QmTest");
+        controller.issueRecord(request, userSig);
 
         vm.prank(issuer);
         vm.expectRevert(VerifiableRecordController.InvalidNonce.selector);
-        controller.issueRecord(request, userSig, "ipfs://QmTest");
+        controller.issueRecord(request, userSig);
     }
 
     // ── Optional expiry ──────────────────────────────────────────────────
@@ -204,11 +204,11 @@ contract VerifiableRecordControllerTest is Test {
         bytes memory userSig = _signRequest(request, userPrivateKey);
 
         vm.prank(issuer);
-        bytes32 contentKey = controller.issueRecord(request, userSig, "ipfs://QmNoExpiry");
+        bytes32 contentKey = controller.issueRecord(request, userSig);
 
         string memory key = string.concat("vr:", issuer.toHexString(), ":", recordType);
         string memory expected =
-            string.concat(uint256(contentKey).toHexString(32), " ", uint256(0).toString(), " ", "ipfs://QmNoExpiry");
+            string.concat(uint256(contentKey).toHexString(32), " ", uint256(0).toString());
         assertEq(resolverAlice.text(node, key), expected);
     }
 
@@ -256,7 +256,7 @@ contract VerifiableRecordControllerTest is Test {
         bytes32 aliceContentKey = controller.computeContentKey(aliceRequest, aliceSig);
 
         vm.prank(issuer);
-        controller.issueRecord(aliceRequest, aliceSig, "ipfs://QmAlice");
+        controller.issueRecord(aliceRequest, aliceSig);
 
         // Mallory copies Alice's content key to her resolver
         string memory baseKey = string.concat("vr:", issuer.toHexString(), ":", recordType);

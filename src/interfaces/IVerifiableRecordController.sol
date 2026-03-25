@@ -23,9 +23,10 @@ interface IVerifiableRecordController {
     }
 
     /// @notice Issue a verifiable record.
-    ///         Proof data (ECDSA attestation or ZK proof) is stored off-chain at contentURI.
-    ///         Verifiers fetch the proof from contentURI and verify independently.
-    function issueRecord(RecordRequest calldata request, bytes calldata userSignature, string calldata contentURI)
+    ///         Proof data (ECDSA attestation or ZK proof) is stored off-chain at the issuer's
+    ///         specificationURI (registered in IssuerRegistry) — verifiers query the registry
+    ///         and fetch the proof independently.
+    function issueRecord(RecordRequest calldata request, bytes calldata userSignature)
         external
         returns (bytes32 contentKey);
 
