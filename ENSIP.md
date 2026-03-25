@@ -427,6 +427,16 @@ The deployer receives all three roles at construction time.
 | `renewIssuer(address, uint64 newExpiry)` | `ROLE_ISSUER_ADMIN` | Extend an issuer's expiration. The new expiry MUST be in the future. |
 | `grantRoles(address, uint256 roles)` | `ROLE_ISSUER_ADMIN` | Grant role bits to an account. |
 | `revokeRoles(address, uint256 roles)` | `ROLE_ISSUER_ADMIN` | Revoke role bits from an account. |
+| `setSelfActive(bool active)` | None (caller must be issuer) | Allows a registered issuer to toggle their own `active` flag. No DAO role required — intended as an emergency kill switch so an issuer can self-deactivate without waiting for DAO intervention. |
+
+#### View Functions
+
+| Function | Description |
+|----------|-------------|
+| `getIssuer(address)` | Returns the full `IssuerInfo` struct. Reverts if the issuer is not registered. |
+| `isActiveIssuer(address)` | Returns `true` if the issuer is registered, not paused, and not expired. |
+| `getIssuerVerificationMode(address)` | Returns the issuer's `VerificationMode`. Reverts if not registered. |
+| `hasRoles(address, uint256)` | Returns `true` if the account holds any of the specified role bits. |
 
 ### 11. Resolver Authorization
 
@@ -477,7 +487,7 @@ Nonces are tracked per signer address (the recovered address from the EIP-712 si
 
 #### Name Transfer Protection
 
-When an ENS name is transferred to a new owner, existing verifiable records become stale — they attest to the previous owner, not the current one. Verifiers MUST recover the signer from the proof bundle's EIP-712 signature and compare it against the current ENS registry owner (Section 7, step 10). This ensures that a sold name does not carry forward attestations that belong to the previous owner.
+When an ENS name is transferred to a new owner, existing verifiable records become stale — they attest to the previous owner, not the current one. Verifiers MUST recover the signer from the proof bundle's EIP-712 signature and compare it against the current ENS registry owner (Section 7, step 9). This ensures that a sold name does not carry forward attestations that belong to the previous owner.
 
 The user's signature in the content key derivation provides the cryptographic anchor: since different private keys produce different signatures, the content key itself implicitly encodes the signer's identity. However, the explicit ownership check is still necessary because the content key alone does not reveal *who* the signer was — only the EIP-712 recovery step does.
 
@@ -486,6 +496,7 @@ The user's signature in the content key derivation provides the cryptographic an
 The Issuer Registry provides multiple mechanisms to disable a compromised or misbehaving issuer:
 
 - **Pausing**: Temporarily prevents the issuer from writing new records. Existing records remain on-chain but verifiers SHOULD check issuer status.
+- **Self-deactivation**: Issuers can call `setSelfActive(false)` to immediately deactivate themselves without DAO intervention. This serves as an emergency kill switch -- for example, if an issuer detects a key compromise, it can self-deactivate before the DAO responds.
 - **Revocation**: Permanently removes the issuer. The `IssuerRevoked` event includes a reason string for audit purposes.
 - **Expiration**: Issuers have a built-in expiration timestamp. Expired issuers are treated as inactive.
 
