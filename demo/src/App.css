@@ -1,0 +1,154 @@
+:root {
+  --bg: #0a0a0f;
+  --surface: #14141f;
+  --border: #2a2a3a;
+  --text: #e4e4ed;
+  --text-muted: #8888a0;
+  --accent: #6366f1;
+  --pass: #22c55e;
+  --fail: #ef4444;
+  --mono-font: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.6;
+}
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 1.5rem;
+  color: var(--accent);
+}
+
+.loading {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.section.error {
+  border-color: var(--fail);
+}
+
+.section.error pre {
+  color: var(--fail);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+}
+
+h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+tr + tr {
+  border-top: 1px solid var(--border);
+}
+
+td {
+  padding: 0.4rem 0;
+  font-size: 0.9rem;
+  vertical-align: top;
+}
+
+td.label {
+  color: var(--text-muted);
+  width: 160px;
+  padding-right: 1rem;
+  white-space: nowrap;
+}
+
+td.mono {
+  font-family: var(--mono-font);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+td.check-pass {
+  color: var(--pass);
+  font-weight: 600;
+  font-family: var(--mono-font);
+  font-size: 0.85rem;
+}
+
+td.check-fail {
+  color: var(--fail);
+  font-weight: 600;
+  font-family: var(--mono-font);
+  font-size: 0.85rem;
+}
+
+.verdict {
+  margin-top: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.verdict.pass {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid var(--pass);
+  color: var(--pass);
+}
+
+.verdict.fail {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--fail);
+  color: var(--fail);
+}
+
+.signer-info {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.signer-info code {
+  font-family: var(--mono-font);
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+code {
+  font-family: var(--mono-font);
+  background: rgba(99, 102, 241, 0.1);
+  padding: 0.15rem 0.35rem;
+  border-radius: 3px;
+  font-size: 0.85rem;
+}

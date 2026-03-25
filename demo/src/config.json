@@ -1,0 +1,13 @@
+{
+  "registryAddress": "0xe26E6C5Cb47167627d6bC24705ddDc5a6ec22ACE",
+  "controllerAddress": "0x95bA2074cd84ea48aAa3DC553e663d98b9a756A4",
+  "resolverAddress": "0xFDF7c69db5Fd6370d5BC935d6be6CdB5376F5A39",
+  "ensRegistryAddress": "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e",
+  "issuerAddress": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  "userAddress": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+  "ensName": "ensverify.eth",
+  "node": "0x0de621a3a24abe603c5d848b90f3e79b3a38a328025b1f62ebf8daa086606737",
+  "recordType": "github",
+  "chainId": 1,
+  "rpcUrl": "http://127.0.0.1:8545"
+}
