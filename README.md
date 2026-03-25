@@ -126,7 +126,7 @@ For smart contracts that need to verify a record within a transaction (e.g. gati
 Calling Contract                  Controller    Resolver    IssuerRegistry   ENSRegistry
    │                                  │             │              │              │
    │─── getIssuer(issuer) ────────────┼─────────────┼─────────────►│              │
-   │◄── { active, specURI, ... } ────┼─────────────┼──────────────│              │
+   │◄── { active, specURI, ... } ─────┼─────────────┼──────────────│              │
    │    (if null or !active → revert) │             │              │              │
    │                                  │             │              │              │
    │─── text(vr:{issuer}:{type}) ─────┼────────────►│              │              │
@@ -134,7 +134,7 @@ Calling Contract                  Controller    Resolver    IssuerRegistry   ENS
    │                                  │             │              │              │
    │─── computeContentKey() ─────────►│             │              │              │
    │    (request, userSignature)      │             │              │              │
-   │◄── recomputed key ──────────────│             │              │              │
+   │◄── recomputed key ───────────────│             │              │              │
    │                                  │             │              │              │
    │─── owner(node) ──────────────────┼─────────────┼──────────────┼─────────────►│
    │◄── current owner ────────────────┼─────────────┼──────────────┼──────────────│
