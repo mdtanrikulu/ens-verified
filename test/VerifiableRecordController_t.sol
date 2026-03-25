@@ -125,9 +125,8 @@ contract VerifiableRecordControllerTest is Test {
 
         // Verify text record: "{contentKey} {expires}"
         string memory key = string.concat("vr:", issuer.toHexString(), ":", recordType);
-        string memory expected = string.concat(
-            uint256(expectedKey).toHexString(32), " ", uint256(defaultExpiry).toString()
-        );
+        string memory expected =
+            string.concat(uint256(expectedKey).toHexString(32), " ", uint256(defaultExpiry).toString());
         assertEq(resolverAlice.text(node, key), expected);
     }
 
@@ -207,8 +206,7 @@ contract VerifiableRecordControllerTest is Test {
         bytes32 contentKey = controller.issueRecord(request, userSig);
 
         string memory key = string.concat("vr:", issuer.toHexString(), ":", recordType);
-        string memory expected =
-            string.concat(uint256(contentKey).toHexString(32), " ", uint256(0).toString());
+        string memory expected = string.concat(uint256(contentKey).toHexString(32), " ", uint256(0).toString());
         assertEq(resolverAlice.text(node, key), expected);
     }
 

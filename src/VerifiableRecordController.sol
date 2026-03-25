@@ -64,7 +64,9 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
         if (signer == address(0)) revert InvalidSignature();
 
         if (request.nonce != nonces[signer]) revert InvalidNonce();
-        unchecked { nonces[signer]++; }
+        unchecked {
+            nonces[signer]++;
+        }
 
         // expires == 0 means no expiration
         if (request.expires != 0 && request.expires <= block.timestamp) revert Expired();
@@ -134,10 +136,10 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
             calldatacopy(buf, userSignature.offset, sigLen)
 
             let p := add(buf, sigLen)
-            mstore(p, nameHash)                              // [+0,  +32): nameHash
-            mstore(add(p, 0x20), shl(96, resolver))          // [+32, +52): resolver (20 bytes) + 12 zero bytes
-            mstore(add(p, 0x34), dataHash)                   // [+52, +84): recordDataHash (overwrites zeros)
-            mstore(add(p, 0x54), shl(96, issuerAddr))        // [+84, +104): issuer (20 bytes)
+            mstore(p, nameHash) // [+0,  +32): nameHash
+            mstore(add(p, 0x20), shl(96, resolver)) // [+32, +52): resolver (20 bytes) + 12 zero bytes
+            mstore(add(p, 0x34), dataHash) // [+52, +84): recordDataHash (overwrites zeros)
+            mstore(add(p, 0x54), shl(96, issuerAddr)) // [+84, +104): issuer (20 bytes)
 
             result := keccak256(buf, totalLen)
         }
@@ -153,14 +155,14 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
         assembly {
             let buf := mload(0x40)
             mstore(buf, typehash)
-            mstore(add(buf, 0x20), calldataload(request))                 // node
+            mstore(add(buf, 0x20), calldataload(request)) // node
             mstore(add(buf, 0x40), nameHash)
-            mstore(add(buf, 0x60), calldataload(add(request, 0x40)))      // resolver (padded)
+            mstore(add(buf, 0x60), calldataload(add(request, 0x40))) // resolver (padded)
             mstore(add(buf, 0x80), typeHash_)
-            mstore(add(buf, 0xa0), calldataload(add(request, 0x80)))      // recordDataHash
-            mstore(add(buf, 0xc0), calldataload(add(request, 0xa0)))      // issuer (padded)
-            mstore(add(buf, 0xe0), calldataload(add(request, 0xc0)))      // expires (padded)
-            mstore(add(buf, 0x100), calldataload(add(request, 0xe0)))     // nonce
+            mstore(add(buf, 0xa0), calldataload(add(request, 0x80))) // recordDataHash
+            mstore(add(buf, 0xc0), calldataload(add(request, 0xa0))) // issuer (padded)
+            mstore(add(buf, 0xe0), calldataload(add(request, 0xc0))) // expires (padded)
+            mstore(add(buf, 0x100), calldataload(add(request, 0xe0))) // nonce
             structHash := keccak256(buf, 0x120) // 9 × 32 = 288 bytes
         }
         bytes32 digest = _hashTypedDataV4(structHash);
@@ -176,9 +178,8 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
     function _writeToResolver(RecordRequest calldata request, bytes32 contentKey) internal {
         ITextResolver resolver = ITextResolver(request.resolver);
         string memory key = _buildRecordKey(request.issuer, request.recordType);
-        string memory value = string.concat(
-            uint256(contentKey).toHexString(32), " ", uint256(request.expires).toString()
-        );
+        string memory value =
+            string.concat(uint256(contentKey).toHexString(32), " ", uint256(request.expires).toString());
         resolver.setText(request.node, key, value);
     }
 

@@ -17,10 +17,11 @@ contract ContentKeyEquivalenceTest is Test {
         controller = new VerifiableRecordController(address(registry));
     }
 
-    function _referenceContentKey(
-        IVerifiableRecordController.RecordRequest memory request,
-        bytes memory userSignature
-    ) internal pure returns (bytes32) {
+    function _referenceContentKey(IVerifiableRecordController.RecordRequest memory request, bytes memory userSignature)
+        internal
+        pure
+        returns (bytes32)
+    {
         return keccak256(
             abi.encodePacked(
                 userSignature,
@@ -64,9 +65,7 @@ contract ContentKeyEquivalenceTest is Test {
         });
 
         // 65-byte signature (typical ECDSA)
-        bytes memory userSig = abi.encodePacked(
-            bytes32(uint256(1)), bytes32(uint256(2)), uint8(27)
-        );
+        bytes memory userSig = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)), uint8(27));
 
         bytes32 expected = _referenceContentKey(request, userSig);
         bytes32 optimized = controller.computeContentKey(request, userSig);
