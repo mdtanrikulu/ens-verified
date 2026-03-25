@@ -280,21 +280,19 @@ If no record exists for the given `(node, msg.sender, recordType)` triple, the t
 
 A verifier MUST perform the following steps to validate a verifiable record. All steps are required for the record to be considered valid. The issuer registry check is performed **first** to fail fast and avoid unnecessary proof fetches for revoked/expired issuers.
 
-1. **Check issuer status.** Call `issuerRegistry.isActiveIssuer(issuer)` to confirm the issuer is registered, active, and not expired. If the issuer is not active, the record is INVALID. This check MUST be performed before fetching any off-chain data to avoid wasted bandwidth and computation.
+1. **Get issuer info.** Call `issuerRegistry.getIssuer(issuer)` to obtain the issuer's status, `specificationURI`, `verificationMode`, and `verifierContract`. If the call reverts (issuer not registered) or `active == false`, the record is INVALID. This check MUST be performed before fetching any off-chain data to avoid wasted bandwidth and computation. One call provides both status and the `specificationURI` endpoint from which proof bundles are fetched.
 
-2. **Retrieve issuer info.** Call `issuerRegistry.getIssuer(issuer)` to obtain the issuer's `specificationURI`, `verificationMode`, and `verifierContract`. The `specificationURI` is the endpoint from which proof bundles are fetched.
+2. **Resolve the text record.** Query the ENS resolver for the text record at key `vr:{issuer}:{recordType}` on the target node.
 
-3. **Resolve the text record.** Query the ENS resolver for the text record at key `vr:{issuer}:{recordType}` on the target node.
+3. **Parse the value.** Split the value into `contentKey` and `expires` as specified in Section 3. If parsing fails, the record is INVALID.
 
-4. **Parse the value.** Split the value into `contentKey` and `expires` as specified in Section 3. If parsing fails, the record is INVALID.
+4. **Check expiration.** If `expires > 0` and `expires <= currentTimestamp`, the record is EXPIRED. Verifiers SHOULD treat expired records as invalid unless the application semantics dictate otherwise.
 
-5. **Check expiration.** If `expires > 0` and `expires <= currentTimestamp`, the record is EXPIRED. Verifiers SHOULD treat expired records as invalid unless the application semantics dictate otherwise.
+5. **Fetch the proof bundle.** Retrieve the JSON document from the issuer's `specificationURI` (obtained in step 1). If the proof bundle is unavailable, the record CANNOT be verified. Verifiers SHOULD treat this as a verification failure.
 
-6. **Fetch the proof bundle.** Retrieve the JSON document from the issuer's `specificationURI` (obtained in step 2). If the proof bundle is unavailable, the record CANNOT be verified. Verifiers SHOULD treat this as a verification failure.
+6. **Recompute the content key.** Using the `userSignature`, `ensName`, `resolver`, `recordDataHash`, and `issuer` from the proof bundle, recompute the content key as specified in Section 4.
 
-7. **Recompute the content key.** Using the `userSignature`, `ensName`, `resolver`, `recordDataHash`, and `issuer` from the proof bundle, recompute the content key as specified in Section 4.
-
-8. **Verify the content key.** Compare the recomputed content key with the on-chain `contentKey`. If they do not match, the record is INVALID. Alternatively, the verifier MAY call the contract's `verifyContentKey` function:
+7. **Verify the content key.** Compare the recomputed content key with the on-chain `contentKey`. If they do not match, the record is INVALID. Alternatively, the verifier MAY call the contract's `verifyContentKey` function:
    ```solidity
    function verifyContentKey(
        bytes32 contentKey,
@@ -303,9 +301,9 @@ A verifier MUST perform the following steps to validate a verifiable record. All
    ) external pure returns (bool);
    ```
 
-9. **Verify the issuer's attestation.** Depending on the issuer's verification mode (see Section 9), validate the issuer's attestation or zero-knowledge proof contained in the proof bundle. The exact verification procedure depends on the issuer's `verificationMode` and `verifierContract` as registered in the Issuer Registry.
+8. **Verify the issuer's attestation.** Depending on the issuer's verification mode (see Section 9), validate the issuer's attestation or zero-knowledge proof contained in the proof bundle. The exact verification procedure depends on the issuer's `verificationMode` and `verifierContract` as registered in the Issuer Registry.
 
-10. **Verify name ownership.** Recover the signer address from the `userSignature` and the EIP-712 typed data (Section 5). Query the ENS registry for the current owner of the `node`. If the recovered signer does NOT match the current owner, the record is STALE — it was issued to a previous owner. Verifiers MUST treat ownership-mismatched records as invalid. This prevents a sold or transferred name from carrying attestations that belong to the previous owner.
+9. **Verify name ownership.** Recover the signer address from the `userSignature` and the EIP-712 typed data (Section 5). Query the ENS registry for the current owner of the `node`. If the recovered signer does NOT match the current owner, the record is STALE — it was issued to a previous owner. Verifiers MUST treat ownership-mismatched records as invalid. This prevents a sold or transferred name from carrying attestations that belong to the previous owner.
 
     ```
     signer = ecrecover(EIP712Digest(request), userSignature)

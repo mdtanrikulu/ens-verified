@@ -32,7 +32,6 @@ export {
   fetchProofBundle,
   verifyContentKey,
   recoverRecordSigner,
-  checkIssuerStatus,
   getIssuerInfo,
   getNodeOwner,
   verifyRecord,

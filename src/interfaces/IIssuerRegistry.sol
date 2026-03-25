@@ -47,6 +47,9 @@ interface IIssuerRegistry {
     function unpauseIssuer(address issuer) external;
     function renewIssuer(address issuer, uint64 newExpiry) external;
 
+    /// @notice Allows a registered issuer to toggle their own active status (emergency kill switch)
+    function setSelfActive(bool active) external;
+
     function getIssuer(address issuer) external view returns (IssuerInfo memory);
     function isActiveIssuer(address issuer) external view returns (bool);
     function getIssuerVerificationMode(address issuer) external view returns (VerificationMode);

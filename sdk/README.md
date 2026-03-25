@@ -110,23 +110,21 @@ console.log(result);
 ### Verification order (why it matters)
 
 ```
-1. issuerActive?     --> NO  --> return early, skip everything
-2. get specURI       --> from IssuerRegistry.getIssuer()
-3. resolve record    --> read text record from resolver
-4. parse + expiry    --> "{contentKey} {expires}"
-5. fetch proof       --> from issuer's specificationURI
-6. contentKey match  --> recompute locally, compare to on-chain
-7. attestation       --> structural check (mode-specific verification is delegated)
-8. signer == owner   --> recover EIP-712 signer, compare to ENS registry owner
+1. getIssuer()       --> null or !active  --> return early, skip everything
+2. resolve record    --> read text record from resolver
+3. parse + expiry    --> "{contentKey} {expires}"
+4. fetch proof       --> from issuer's specificationURI
+5. contentKey match  --> recompute locally, compare to on-chain
+6. attestation       --> structural check (mode-specific verification is delegated)
+7. signer == owner   --> recover EIP-712 signer, compare to ENS registry owner
 ```
 
-The issuer check is first because if the issuer got revoked/paused/expired, there's no point fetching proofs or doing crypto. Saves bandwidth and compute.
+`getIssuer()` is always the first call — if the issuer is not registered, inactive, or expired, there's no point fetching proofs or doing crypto. One RPC call gives you the status and the `specificationURI`.
 
 ### Step-by-step (if you need granular control)
 
 ```ts
 import {
-  checkIssuerStatus,
   getIssuerInfo,
   resolveRecord,
   parseRecordValue,
@@ -136,12 +134,9 @@ import {
   getNodeOwner,
 } from "@ensverify/sdk";
 
-// 1. Is the issuer legit?
-const active = await checkIssuerStatus(publicClient, REGISTRY, issuerAddress);
-if (!active) throw new Error("Issuer not active");
-
-// 2. Where are the proofs?
+// 1. Is the issuer legit? One call — gives status + specificationURI
 const issuerInfo = await getIssuerInfo(publicClient, REGISTRY, issuerAddress);
+if (!issuerInfo || !issuerInfo.active) throw new Error("Issuer not active");
 const proofURI = issuerInfo.specificationURI;
 
 // 3. What's on-chain?
@@ -228,8 +223,7 @@ const { valid, errors } = validateProofBundle(bundle);
 | Function | Description |
 |----------|-------------|
 | `verifyRecord(client, params)` | Full verification pipeline (one call) |
-| `checkIssuerStatus(client, registry, issuer)` | Is issuer active? |
-| `getIssuerInfo(client, registry, issuer)` | Get issuer metadata + specificationURI |
+| `getIssuerInfo(client, registry, issuer)` | Get issuer metadata, status, and specificationURI |
 | `resolveRecord(client, resolver, node, issuer, type)` | Read text record from resolver |
 | `parseRecordValue(raw)` | Parse `"{contentKey} {expires}"` |
 | `fetchProofBundle(uri)` | Fetch + parse proof bundle JSON |

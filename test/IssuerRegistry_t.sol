@@ -176,6 +176,40 @@ contract IssuerRegistryTest is Test {
         assertFalse(registry.isActiveIssuer(makeAddr("unknown")));
     }
 
+    // ── Self-activation (emergency kill switch) ─────────────────────
+
+    function test_setSelfActive_deactivate() public {
+        registry.registerIssuer(
+            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
+        );
+
+        assertTrue(registry.isActiveIssuer(issuer));
+
+        vm.prank(issuer);
+        registry.setSelfActive(false);
+        assertFalse(registry.isActiveIssuer(issuer));
+    }
+
+    function test_setSelfActive_reactivate() public {
+        registry.registerIssuer(
+            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
+        );
+
+        vm.prank(issuer);
+        registry.setSelfActive(false);
+        assertFalse(registry.isActiveIssuer(issuer));
+
+        vm.prank(issuer);
+        registry.setSelfActive(true);
+        assertTrue(registry.isActiveIssuer(issuer));
+    }
+
+    function test_Revert_setSelfActive_notRegistered() public {
+        vm.prank(nonAdmin);
+        vm.expectRevert(IssuerRegistry.NotRegistered.selector);
+        registry.setSelfActive(false);
+    }
+
     // ── Renewal ─────────────────────────────────────────────────────────
 
     function test_renewIssuer() public {

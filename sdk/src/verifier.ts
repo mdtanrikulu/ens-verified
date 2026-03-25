@@ -128,24 +128,6 @@ export async function recoverRecordSigner(
 }
 
 /**
- * Checks whether an issuer is currently active in the IssuerRegistry.
- */
-export async function checkIssuerStatus(
-  client: PublicClient<Transport, Chain>,
-  registryAddress: Address,
-  issuer: Address
-): Promise<boolean> {
-  const isActive = await client.readContract({
-    address: registryAddress,
-    abi: IssuerRegistryABI,
-    functionName: "isActiveIssuer",
-    args: [issuer],
-  });
-
-  return isActive;
-}
-
-/**
  * Fetches the full IssuerInfo from the registry.
  * Returns null if the issuer is not registered.
  */
@@ -207,13 +189,12 @@ export interface VerifyRecordParams {
 
 /**
  * Full verification pipeline:
- * 1. checkIssuerStatus — fail fast if issuer is revoked/expired/paused
- * 2. getIssuerInfo — retrieve specificationURI for proof bundle location
- * 3. resolveRecord — read the text record from the resolver
- * 4. parseRecordValue — parse contentKey, expires
- * 5. fetchProofBundle — fetch the off-chain proof bundle from issuer's specificationURI
- * 6. verifyContentKey — recompute and compare contentKey
- * 7. recoverRecordSigner + owner check — verify the signer is the current name owner
+ * 1. getIssuerInfo — fail fast if issuer is not registered/active, get specificationURI
+ * 2. resolveRecord — read the text record from the resolver
+ * 3. parseRecordValue — parse contentKey, expires
+ * 4. fetchProofBundle — fetch the off-chain proof bundle from issuer's specificationURI
+ * 5. verifyContentKey — recompute and compare contentKey
+ * 6. recoverRecordSigner + owner check — verify the signer is the current name owner
  *
  * Returns a VerificationResult with granular status for each check.
  */
@@ -230,29 +211,24 @@ export async function verifyRecord(
     expired: false,
   };
 
-  // Step 1: Check issuer status first — fail fast before any proof fetching
-  result.issuerActive = await checkIssuerStatus(
-    client,
-    params.registryAddress,
-    params.issuer
-  );
-
-  if (!result.issuerActive) {
-    return result;
-  }
-
-  // Step 2: Get issuer info (specificationURI for proof bundle location)
+  // Step 1: Get issuer info — fail fast if not registered, inactive, or missing specificationURI
   const issuerInfo = await getIssuerInfo(
     client,
     params.registryAddress,
     params.issuer
   );
 
-  if (!issuerInfo || !issuerInfo.specificationURI) {
+  if (!issuerInfo || !issuerInfo.active) {
     return result;
   }
 
-  // Step 3: Resolve the on-chain text record
+  result.issuerActive = true;
+
+  if (!issuerInfo.specificationURI) {
+    return result;
+  }
+
+  // Step 2: Resolve the on-chain text record
   const rawValue = await resolveRecord(
     client,
     params.resolverAddress,
@@ -265,7 +241,7 @@ export async function verifyRecord(
     return result;
   }
 
-  // Step 4: Parse the record value
+  // Step 3: Parse the record value
   let parsed: ParsedRecordValue;
   try {
     parsed = parseRecordValue(rawValue);
@@ -282,7 +258,7 @@ export async function verifyRecord(
     }
   }
 
-  // Step 5: Fetch the off-chain proof bundle from issuer's specificationURI
+  // Step 4: Fetch the off-chain proof bundle from issuer's specificationURI
   let bundle: ProofBundle;
   try {
     bundle = await fetchProofBundle(issuerInfo.specificationURI);
@@ -290,7 +266,7 @@ export async function verifyRecord(
     return result;
   }
 
-  // Step 6: Verify contentKey matches
+  // Step 5: Verify contentKey matches
   result.contentKeyMatch = verifyContentKey(
     bundle.request,
     bundle.userSignature,
@@ -304,7 +280,7 @@ export async function verifyRecord(
     bundle.attestation !== undefined &&
     bundle.attestation.length > 2; // more than just "0x"
 
-  // Step 7: Recover the signer and verify they are the current name owner
+  // Step 6: Recover the signer and verify they are the current name owner
   try {
     const signer = await recoverRecordSigner(
       bundle.request,

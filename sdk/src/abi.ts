@@ -205,6 +205,13 @@ export const IssuerRegistryABI = [
     stateMutability: "nonpayable",
   },
   {
+    type: "function",
+    name: "setSelfActive",
+    inputs: [{ name: "active", type: "bool" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
     type: "event",
     name: "IssuerRegistered",
     inputs: [

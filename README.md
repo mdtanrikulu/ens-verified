@@ -69,12 +69,10 @@ No transaction required. The verifier reads on-chain state and verifies the proo
 ```
 Verifier                          Chain                     Issuer Storage
    │                                │                            │
-   │─── isActiveIssuer(issuer) ────►│                            │
-   │◄── true / false ───────────────│                            │
-   │    (if false → return early)   │                            │
-   │                                │                            │
    │─── getIssuer(issuer) ─────────►│                            │
-   │◄── { specificationURI, ... } ──│                            │
+   │◄── { active, specURI, ... } ───│                            │
+   │    (if null or !active         │                            │
+   │     → return early)            │                            │
    │                                │                            │
    │─── text(vr:{issuer}:{type}) ──►│                            │
    │◄── "{contentKey} {expires}" ───│                            │
@@ -108,16 +106,15 @@ Verifier                          Chain                     Issuer Storage
 
 Steps:
 
-1. **Check issuer status** by calling `IssuerRegistry.isActiveIssuer()`. If inactive, stop — no point fetching proofs.
-2. **Get issuer info** from `IssuerRegistry.getIssuer()` to retrieve the `specificationURI` where the proof bundle is hosted.
-3. **Read** the `vr:{issuer}:{type}` text record. Parse the two space-delimited fields: content key and expires.
-4. **Check expiration** against the current time.
-5. **Fetch** the proof bundle from the issuer's `specificationURI`.
-6. **Recompute** the content key from the proof bundle's public inputs (user signature, ENS name, resolver address, record data hash, issuer address). It must match the on-chain content key.
-7. **Verify the attestation:**
+1. **Get issuer info** from `IssuerRegistry.getIssuer()`. If null or `!active`, stop — no point fetching proofs. One call gives you status and the `specificationURI` where the proof bundle is hosted.
+2. **Read** the `vr:{issuer}:{type}` text record. Parse the two space-delimited fields: content key and expires.
+3. **Check expiration** against the current time.
+4. **Fetch** the proof bundle from the issuer's `specificationURI`.
+5. **Recompute** the content key from the proof bundle's public inputs (user signature, ENS name, resolver address, record data hash, issuer address). It must match the on-chain content key.
+6. **Verify the attestation:**
    - ECDSA: recover the signer from the attestation signature and confirm it matches the issuer address. Pure cryptography — no gas cost.
    - ZK: call the issuer's registered verifier contract with the proof and public inputs. A `view` call — no gas cost.
-8. **Recover the EIP-712 signer** from the user signature in the proof bundle. Compare against the current ENS name owner via `ENSRegistry.owner(node)`. This protects against stale attestations after name transfers.
+7. **Recover the EIP-712 signer** from the user signature in the proof bundle. Compare against the current ENS name owner via `ENSRegistry.owner(node)`. This protects against stale attestations after name transfers.
 
 If all checks pass, the record is valid.
 
@@ -128,9 +125,9 @@ For smart contracts that need to verify a record within a transaction (e.g. gati
 ```
 Calling Contract                  Controller    Resolver    IssuerRegistry   ENSRegistry
    │                                  │             │              │              │
-   │─── isActiveIssuer(issuer) ───────┼─────────────┼─────────────►│              │
-   │◄── true / false ─────────────────┼─────────────┼──────────────│              │
-   │    (if false → revert)           │             │              │              │
+   │─── getIssuer(issuer) ────────────┼─────────────┼─────────────►│              │
+   │◄── { active, specURI, ... } ────┼─────────────┼──────────────│              │
+   │    (if null or !active → revert) │             │              │              │
    │                                  │             │              │              │
    │─── text(vr:{issuer}:{type}) ─────┼────────────►│              │              │
    │◄── "{contentKey} {expires}" ─────┼─────────────│              │              │
@@ -154,7 +151,7 @@ Calling Contract                  Controller    Resolver    IssuerRegistry   ENS
 
 Steps:
 
-1. **Check issuer status** by calling `IssuerRegistry.isActiveIssuer(issuer)`. If inactive, revert early.
+1. **Get issuer info** by calling `IssuerRegistry.getIssuer(issuer)`. If not registered or `!active`, revert early.
 2. **Read** the `vr:{issuer}:{type}` text record from the resolver. Parse the two space-delimited fields: content key and expiration.
 3. **Check expiration** against `block.timestamp`.
 4. **Recompute** the content key by calling `VerifiableRecordController.computeContentKey(request, userSignature)` with the known public inputs. Compare it to the parsed value — they must match.

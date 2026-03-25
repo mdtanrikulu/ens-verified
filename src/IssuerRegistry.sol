@@ -109,6 +109,16 @@ contract IssuerRegistry is IIssuerRegistry {
         _issuers[issuer].expires = newExpiry;
     }
 
+    /// @notice Allows a registered issuer to toggle their own active status.
+    ///         No DAO role required — the issuer controls this for emergency self-deactivation.
+    function setSelfActive(bool active) external {
+        if (!_registered[msg.sender]) revert NotRegistered();
+
+        _issuers[msg.sender].active = active;
+
+        emit IssuerStatusChanged(msg.sender, active);
+    }
+
     // ── View functions ──────────────────────────────────────────────────
     function getIssuer(address issuer) external view returns (IssuerInfo memory) {
         if (!_registered[issuer]) revert NotRegistered();
