@@ -7,7 +7,7 @@ Cryptographically-bound verifiable records for ENS v2. A DAO-governed issuer reg
 ```
 ENS DAO
   └── IssuerRegistry          (on-chain: approved issuers, specificationURI for proof bundles)
-        └── Authorized Issuer  (off-chain: validates identity, signs attestation, hosts proof bundle)
+        └── Authorized Issuer  (off-chain: validates identity, signs proof, hosts proof bundle)
               └── VerifiableRecordController  (on-chain: derives key, writes resolver)
                     └── User Resolver          (on-chain: stores content key + expiry)
                           └── Verifier          (off-chain: resolves, fetches, verifies)
@@ -20,7 +20,7 @@ Two on-chain contracts, everything else is off-chain:
 | `IssuerRegistry` | DAO-governed whitelist of authorized issuers with bitmap roles, expiry, pause/revoke |
 | `VerifiableRecordController` | EIP-712 signature validation, content key derivation, resolver text record writes |
 
-Proofs (ECDSA attestations, ZK proofs) are stored off-chain by the issuer at their `specificationURI` (registered in IssuerRegistry). Verifiers query the registry for the URI, then fetch and verify independently.
+Proofs (ECDSA signatures, ZK proofs) are stored off-chain by the issuer at their `specificationURI` (registered in IssuerRegistry). Verifiers query the registry for the URI, then fetch and verify independently.
 
 ## Content Key Derivation
 
@@ -90,7 +90,7 @@ Verifier                          Chain                     Issuer Storage
    │  │    from proof bundle.       │                            │
    │  │    Must match on-chain key. │                            │
    │  │                             │                            │
-   │  │ 4. Verify attestation.      │                            │
+   │  │ 4. Verify proof.            │                            │
    │  │                             │                            │
    │  │ 5. Recover EIP-712 signer   │                            │
    │  │    from user signature.     │                            │
@@ -111,10 +111,10 @@ Steps:
 3. **Check expiration** against the current time.
 4. **Fetch** the proof bundle from the issuer's `specificationURI`.
 5. **Recompute** the content key from the proof bundle's public inputs (user signature, ENS name, resolver address, record data hash, issuer address). It must match the on-chain content key.
-6. **Verify the attestation:**
-   - ECDSA: recover the signer from the attestation signature and confirm it matches the issuer address. Pure cryptography — no gas cost.
+6. **Verify the proof:**
+   - ECDSA: recover the signer from the proof signature and confirm it matches the issuer address. Pure cryptography — no gas cost.
    - ZK: call the issuer's registered verifier contract with the proof and public inputs. A `view` call — no gas cost.
-7. **Recover the EIP-712 signer** from the user signature in the proof bundle. Compare against the current ENS name owner via `ENSRegistry.owner(node)`. This protects against stale attestations after name transfers.
+7. **Recover the EIP-712 signer** from the user signature in the proof bundle. Compare against the current ENS name owner via `ENSRegistry.owner(node)`. This protects against stale proofs after name transfers.
 
 If all checks pass, the record is valid.
 
@@ -159,7 +159,7 @@ Steps:
 
 For on-chain verification the calling contract needs access to the original `RecordRequest` and `userSignature`. These can be passed as calldata by the transaction sender, or retrieved from an off-chain source and submitted as part of the transaction. The content key recomputation and comparison is the core integrity check — if it matches the resolver value, the record was legitimately issued.
 
-Note: Full ECDSA attestation verification (signature recovery) can also be done on-chain but requires the attestation signature as calldata. ZK proof verification can be done on-chain by calling the issuer's verifier contract with the proof and public inputs. Both add gas cost proportional to the proof size.
+Note: Full ECDSA proof verification (signature recovery) can also be done on-chain but requires the proof signature as calldata. ZK proof verification can be done on-chain by calling the issuer's verifier contract with the proof and public inputs. Both add gas cost proportional to the proof size.
 
 ## Build
 

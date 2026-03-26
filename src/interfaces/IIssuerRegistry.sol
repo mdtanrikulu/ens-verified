@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 interface IIssuerRegistry {
     /// @notice Emitted when an issuer is registered
     event IssuerRegistered(
-        address indexed issuer, string name, uint256 supportedRecordTypes, uint8 verificationMode, uint64 expires
+        address indexed issuer, string name, uint256 supportedRecordTypes, uint64 expires, address verifierContract
     );
 
     /// @notice Emitted when an issuer is revoked
@@ -13,18 +13,10 @@ interface IIssuerRegistry {
     /// @notice Emitted when an issuer's status is paused/unpaused
     event IssuerStatusChanged(address indexed issuer, bool active);
 
-    /// @notice Verification modes
-    enum VerificationMode {
-        ECDSA_ATTESTATION,
-        ZK_PROOF,
-        HYBRID
-    }
-
     /// @notice Issuer record
     struct IssuerInfo {
         string name;
         uint256 supportedRecordTypes;
-        VerificationMode verificationMode;
         uint64 registeredAt;
         uint64 expires;
         bool active;
@@ -36,7 +28,6 @@ interface IIssuerRegistry {
         address issuer,
         string calldata name,
         uint256 supportedRecordTypes,
-        VerificationMode mode,
         uint64 expires,
         address verifierContract,
         string calldata specificationURI
@@ -52,5 +43,4 @@ interface IIssuerRegistry {
 
     function getIssuer(address issuer) external view returns (IssuerInfo memory);
     function isActiveIssuer(address issuer) external view returns (bool);
-    function getIssuerVerificationMode(address issuer) external view returns (VerificationMode);
 }

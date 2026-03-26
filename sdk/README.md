@@ -1,6 +1,6 @@
 # @ensverify/sdk
 
-TypeScript SDK for ENS Verifiable Records. Issue, verify, and revoke third-party attestations stored as ENS text records.
+TypeScript SDK for ENS Verifiable Records. Issue, verify, and revoke third-party verifiable records stored as ENS text records.
 
 ## Install
 
@@ -59,14 +59,14 @@ const txHash = await issueRecord(issuerWalletClient, CONTROLLER, request, userSi
 ### 3. Issuer creates and hosts proof bundle
 
 ```ts
-import { createProofBundle, signAttestation, computeContentKey } from "@ensverify/sdk";
+import { createProofBundle, signProof, computeContentKey } from "@ensverify/sdk";
 
-// Issuer signs the attestation
-const attestation = await signAttestation(issuerWalletClient, request.recordDataHash);
+// Issuer signs the proof
+const proof = await signProof(issuerWalletClient, request.recordDataHash);
 
 // Build the proof bundle
 const contentKey = computeContentKey(request, userSignature);
-const bundle = createProofBundle(request, userSignature, contentKey, attestation);
+const bundle = createProofBundle(request, userSignature, contentKey, proof);
 
 // Host this JSON at the issuer's specificationURI (registered in IssuerRegistry)
 await uploadToStorage(JSON.stringify(bundle));
@@ -101,7 +101,7 @@ console.log(result);
 //   valid: true,              // all checks passed
 //   issuerActive: true,       // issuer is registered, active, not expired
 //   contentKeyMatch: true,    // on-chain key matches recomputed key
-//   attestationValid: true,   // proof bundle has attestation data
+//   proofValid: true,          // proof bundle has valid proof data
 //   signerIsOwner: true,      // EIP-712 signer == current ENS name owner
 //   expired: false,           // record hasn't expired
 // }
@@ -115,7 +115,7 @@ console.log(result);
 3. parse + expiry    --> "{contentKey} {expires}"
 4. fetch proof       --> from issuer's specificationURI
 5. contentKey match  --> recompute locally, compare to on-chain
-6. attestation       --> structural check (mode-specific verification is delegated)
+6. proof             --> structural check (mode-specific verification is delegated)
 7. signer == owner   --> recover EIP-712 signer, compare to ENS registry owner
 ```
 
@@ -190,7 +190,7 @@ const { valid, errors } = validateProofBundle(bundle);
 | Data | Where | Why |
 |------|-------|-----|
 | `contentKey` + `expires` | ENS text record | Minimal on-chain footprint. The content key is the cryptographic anchor. |
-| Proof bundle | Issuer's `specificationURI` | Full attestation data. Too expensive to store on-chain. |
+| Proof bundle | Issuer's `specificationURI` | Full proof data. Too expensive to store on-chain. |
 | Issuer info + `specificationURI` | IssuerRegistry | DAO-governed. Verifier queries this first to get proof bundle location. |
 | User's EIP-712 signature | Proof bundle (off-chain) | Proves user consent. Used to recompute content key. |
 
@@ -215,7 +215,7 @@ const { valid, errors } = validateProofBundle(bundle);
 | `createRecordRequest(params)` | Build a `RecordRequest` from inputs |
 | `getEIP712TypedData(request, controller, chainId)` | Get typed data for wallet signing |
 | `issueRecord(client, controller, request, sig)` | Submit issuance tx |
-| `signAttestation(client, data)` | Sign attestation data for proof bundle |
+| `signProof(client, data)` | Sign proof data for proof bundle |
 | `revokeRecord(client, controller, node, type)` | Revoke a record |
 
 ### Verifier Functions

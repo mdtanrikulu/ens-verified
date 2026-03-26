@@ -34,7 +34,7 @@ import {
   createRecordRequest,
   getEIP712TypedData,
   issueRecord,
-  signAttestation,
+  signProof,
   computeContentKey,
   createProofBundle,
 } from "@ensverify/sdk";
@@ -183,6 +183,7 @@ async function main() {
   const registryArtifact = readArtifact("out/IssuerRegistry.sol/IssuerRegistry.json");
   const controllerArtifact = readArtifact("out/VerifiableRecordController.sol/VerifiableRecordController.json");
   const resolverArtifact = readArtifact("out/MockResolver.sol/MockResolver.json");
+  const verifierArtifact = readArtifact("out/ECDSAProofVerifier.sol/ECDSAProofVerifier.json");
 
   const registryAddress = await deploy(registryArtifact);
   console.log(`   IssuerRegistry:             ${registryAddress}`);
@@ -192,6 +193,9 @@ async function main() {
 
   const resolverAddress = await deploy(resolverArtifact);
   console.log(`   MockResolver:               ${resolverAddress}`);
+
+  const verifierAddress = await deploy(verifierArtifact);
+  console.log(`   ECDSAProofVerifier:         ${verifierAddress}`);
 
   // ── Step 2: Register issuer ────────────────────────────────────────────
 
@@ -209,9 +213,8 @@ async function main() {
       issuerAccount.address,
       "Demo Issuer",
       1n,                                                    // supportedRecordTypes
-      0,                                                     // mode: ECDSA_ATTESTATION
       issuerExpires,                                         // expires
-      "0x0000000000000000000000000000000000000000" as Address, // verifierContract
+      verifierAddress,                                       // verifierContract
       "http://localhost:5173/proof-bundle.json",             // specificationURI
     ],
   });
@@ -316,8 +319,8 @@ async function main() {
   console.log("\n5. Creating proof bundle...");
 
   const contentKey = computeContentKey(request, userSignature);
-  const attestation = await signAttestation(issuerClient, recordDataHash);
-  const bundle = createProofBundle(request, userSignature, contentKey, attestation);
+  const proof = await signProof(issuerClient, recordDataHash);
+  const bundle = createProofBundle(request, userSignature, contentKey, proof);
 
   // Serialize bigints to strings for JSON
   const serializedBundle = {
@@ -328,7 +331,7 @@ async function main() {
     },
     userSignature: bundle.userSignature,
     contentKey: bundle.contentKey,
-    attestation: bundle.attestation,
+    proof: bundle.proof,
   };
 
   mkdirSync(resolve(__dirname, "public"), { recursive: true });

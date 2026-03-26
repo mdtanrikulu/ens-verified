@@ -7,7 +7,7 @@ import type {
   IssuerInfo,
   VerificationResult,
 } from "./types.js";
-import { TextResolverABI, IssuerRegistryABI, ENSRegistryABI } from "./abi.js";
+import { TextResolverABI, IssuerRegistryABI, ENSRegistryABI, ProofVerifierABI } from "./abi.js";
 import {
   computeContentKey,
   parseRecordValue as parseRecordValueUtil,
@@ -87,7 +87,7 @@ export async function fetchProofBundle(
     },
     userSignature: data.userSignature as Hex,
     contentKey: data.contentKey as Hex,
-    attestation: (data.attestation ?? "0x") as Hex,
+    proof: (data.proof ?? data.attestation ?? "0x") as Hex,
   };
 
   return bundle;
@@ -147,7 +147,6 @@ export async function getIssuerInfo(
     return {
       name: info.name,
       supportedRecordTypes: info.supportedRecordTypes,
-      verificationMode: info.verificationMode,
       registeredAt: info.registeredAt,
       expires: info.expires,
       active: info.active,
@@ -205,7 +204,7 @@ export async function verifyRecord(
   const result: VerificationResult = {
     valid: false,
     contentKeyMatch: false,
-    attestationValid: false,
+    proofValid: false,
     issuerActive: false,
     signerIsOwner: false,
     expired: false,
@@ -273,12 +272,17 @@ export async function verifyRecord(
     parsed.contentKey
   );
 
-  // Check if the attestation field is present (basic structural check).
-  // Full attestation verification depends on the issuer's verification mode
-  // (ECDSA, ZK, or hybrid) and is delegated to the issuer's verifier contract.
-  result.attestationValid =
-    bundle.attestation !== undefined &&
-    bundle.attestation.length > 2; // more than just "0x"
+  // Proof verification: call the issuer's verifierContract on-chain.
+  try {
+    result.proofValid = await client.readContract({
+      address: issuerInfo.verifierContract,
+      abi: ProofVerifierABI,
+      functionName: "verifyProof",
+      args: [bundle.proof, bundle.request.recordDataHash, params.issuer],
+    });
+  } catch {
+    result.proofValid = false;
+  }
 
   // Step 6: Recover the signer and verify they are the current name owner
   try {
@@ -304,7 +308,7 @@ export async function verifyRecord(
   // Overall validity — all checks must pass
   result.valid =
     result.contentKeyMatch &&
-    result.attestationValid &&
+    result.proofValid &&
     result.issuerActive &&
     result.signerIsOwner &&
     !result.expired;

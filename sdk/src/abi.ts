@@ -130,7 +130,6 @@ export const IssuerRegistryABI = [
         components: [
           { name: "name", type: "string" },
           { name: "supportedRecordTypes", type: "uint256" },
-          { name: "verificationMode", type: "uint8" },
           { name: "registeredAt", type: "uint64" },
           { name: "expires", type: "uint64" },
           { name: "active", type: "bool" },
@@ -150,19 +149,11 @@ export const IssuerRegistryABI = [
   },
   {
     type: "function",
-    name: "getIssuerVerificationMode",
-    inputs: [{ name: "issuer", type: "address" }],
-    outputs: [{ name: "", type: "uint8" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
     name: "registerIssuer",
     inputs: [
       { name: "issuer", type: "address" },
       { name: "name", type: "string" },
       { name: "supportedRecordTypes", type: "uint256" },
-      { name: "mode", type: "uint8" },
       { name: "expires", type: "uint64" },
       { name: "verifierContract", type: "address" },
       { name: "specificationURI", type: "string" },
@@ -218,8 +209,8 @@ export const IssuerRegistryABI = [
       { name: "issuer", type: "address", indexed: true },
       { name: "name", type: "string", indexed: false },
       { name: "supportedRecordTypes", type: "uint256", indexed: false },
-      { name: "verificationMode", type: "uint8", indexed: false },
       { name: "expires", type: "uint64", indexed: false },
+      { name: "verifierContract", type: "address", indexed: false },
     ],
   },
   {
@@ -237,6 +228,22 @@ export const IssuerRegistryABI = [
       { name: "issuer", type: "address", indexed: true },
       { name: "active", type: "bool", indexed: false },
     ],
+  },
+] as const;
+
+// ─── ProofVerifier ABI ──────────────────────────────────────────────────────
+
+export const ProofVerifierABI = [
+  {
+    type: "function",
+    name: "verifyProof",
+    inputs: [
+      { name: "proof", type: "bytes" },
+      { name: "recordDataHash", type: "bytes32" },
+      { name: "issuer", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
   },
 ] as const;
 

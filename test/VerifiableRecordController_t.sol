@@ -11,6 +11,7 @@ import {IIssuerRegistry} from "../src/interfaces/IIssuerRegistry.sol";
 import {IVerifiableRecordController} from "../src/interfaces/IVerifiableRecordController.sol";
 
 import {MockResolver} from "./mocks/MockResolver.sol";
+import {ECDSAProofVerifier} from "../src/verifiers/ECDSAProofVerifier.sol";
 
 contract VerifiableRecordControllerTest is Test {
     using Strings for address;
@@ -20,6 +21,7 @@ contract VerifiableRecordControllerTest is Test {
     VerifiableRecordController public controller;
     MockResolver public resolverAlice;
     MockResolver public resolverMallory;
+    ECDSAProofVerifier public verifier;
 
     uint256 userPrivateKey = 0xA11CE;
     address user;
@@ -43,9 +45,10 @@ contract VerifiableRecordControllerTest is Test {
         controller = new VerifiableRecordController(address(registry));
         resolverAlice = new MockResolver();
         resolverMallory = new MockResolver();
+        verifier = new ECDSAProofVerifier();
 
         registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
+            issuer, "Test Issuer", 1, defaultExpiry, address(verifier), ""
         );
     }
 
@@ -147,7 +150,7 @@ contract VerifiableRecordControllerTest is Test {
         bytes memory userSig = _signRequest(request, userPrivateKey);
 
         registry.registerIssuer(
-            nonIssuer, "Other", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
+            nonIssuer, "Other", 1, defaultExpiry, address(verifier), ""
         );
 
         vm.prank(nonIssuer);

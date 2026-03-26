@@ -75,13 +75,13 @@ export function createProofBundle(
   request: RecordRequest,
   userSignature: Hex,
   contentKey: Hex,
-  attestation: Hex
+  proof: Hex
 ): ProofBundle {
   return {
     request,
     userSignature,
     contentKey,
-    attestation,
+    proof,
   };
 }
 
@@ -132,9 +132,9 @@ export function validateProofBundle(bundle: ProofBundle): {
     errors.push("Invalid contentKey: expected 32-byte hex");
   }
 
-  // Check attestation
-  if (!isHex(bundle.attestation) || bundle.attestation.length < 4) {
-    errors.push("Invalid attestation: expected non-empty hex");
+  // Check proof
+  if (!isHex(bundle.proof) || bundle.proof.length < 4) {
+    errors.push("Invalid proof: expected non-empty hex");
   }
 
   return { valid: errors.length === 0, errors };

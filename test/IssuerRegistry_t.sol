@@ -4,9 +4,11 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {IssuerRegistry} from "../src/IssuerRegistry.sol";
 import {IIssuerRegistry} from "../src/interfaces/IIssuerRegistry.sol";
+import {ECDSAProofVerifier} from "../src/verifiers/ECDSAProofVerifier.sol";
 
 contract IssuerRegistryTest is Test {
     IssuerRegistry public registry;
+    ECDSAProofVerifier public verifier;
 
     address admin = address(this);
     address issuer = makeAddr("issuer");
@@ -17,6 +19,7 @@ contract IssuerRegistryTest is Test {
 
     function setUp() public {
         registry = new IssuerRegistry();
+        verifier = new ECDSAProofVerifier();
         defaultExpiry = uint64(block.timestamp + 365 days);
 
         // Grant pauser role
@@ -26,61 +29,38 @@ contract IssuerRegistryTest is Test {
     // ── Registration ────────────────────────────────────────────────────
 
     function test_registerIssuer_withAdminRole() public {
-        registry.registerIssuer(
-            issuer,
-            "Test Issuer",
-            1, // bit 0 = identity
-            IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION,
-            defaultExpiry,
-            address(0),
-            "ipfs://spec"
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "ipfs://spec");
 
         IIssuerRegistry.IssuerInfo memory info = registry.getIssuer(issuer);
         assertEq(info.name, "Test Issuer");
         assertEq(info.supportedRecordTypes, 1);
-        assertEq(uint8(info.verificationMode), uint8(IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION));
         assertTrue(info.active);
         assertEq(info.expires, defaultExpiry);
+        assertEq(info.verifierContract, address(verifier));
         assertEq(info.specificationURI, "ipfs://spec");
     }
 
     function test_Revert_registerIssuer_withoutAdminRole() public {
         vm.prank(nonAdmin);
         vm.expectRevert(IssuerRegistry.Unauthorized.selector);
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
     }
 
-    function test_Revert_registerIssuer_zeroAddress() public {
+    function test_Revert_registerIssuer_zeroIssuerAddress() public {
         vm.expectRevert(IssuerRegistry.ZeroAddress.selector);
-        registry.registerIssuer(
-            address(0),
-            "Test Issuer",
-            1,
-            IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION,
-            defaultExpiry,
-            address(0),
-            ""
-        );
+        registry.registerIssuer(address(0), "Test Issuer", 1, defaultExpiry, address(verifier), "");
+    }
+
+    function test_Revert_registerIssuer_zeroVerifierContract() public {
+        vm.expectRevert(IssuerRegistry.ZeroAddress.selector);
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(0), "");
     }
 
     function test_Revert_registerIssuer_alreadyRegistered() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         vm.expectRevert(IssuerRegistry.AlreadyRegistered.selector);
-        registry.registerIssuer(
-            issuer,
-            "Test Issuer 2",
-            1,
-            IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION,
-            defaultExpiry,
-            address(0),
-            ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer 2", 1, defaultExpiry, address(verifier), "");
     }
 
     function test_Revert_registerIssuer_invalidExpiry() public {
@@ -89,9 +69,8 @@ contract IssuerRegistryTest is Test {
             issuer,
             "Test Issuer",
             1,
-            IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION,
             uint64(block.timestamp), // not strictly greater
-            address(0),
+            address(verifier),
             ""
         );
     }
@@ -99,9 +78,7 @@ contract IssuerRegistryTest is Test {
     // ── Revocation ──────────────────────────────────────────────────────
 
     function test_revokeIssuer() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         registry.revokeIssuer(issuer, "misbehavior");
         assertFalse(registry.isActiveIssuer(issuer));
@@ -115,9 +92,7 @@ contract IssuerRegistryTest is Test {
     // ── Pause / Unpause ─────────────────────────────────────────────────
 
     function test_pauseIssuer() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         vm.prank(pauser);
         registry.pauseIssuer(issuer);
@@ -126,9 +101,7 @@ contract IssuerRegistryTest is Test {
     }
 
     function test_unpauseIssuer() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         vm.prank(pauser);
         registry.pauseIssuer(issuer);
@@ -142,9 +115,7 @@ contract IssuerRegistryTest is Test {
     // ── isActiveIssuer edge cases ───────────────────────────────────────
 
     function test_isActiveIssuer_returnsFalseWhenExpired() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         assertTrue(registry.isActiveIssuer(issuer));
 
@@ -154,9 +125,7 @@ contract IssuerRegistryTest is Test {
     }
 
     function test_isActiveIssuer_returnsFalseWhenPaused() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         vm.prank(pauser);
         registry.pauseIssuer(issuer);
@@ -164,9 +133,7 @@ contract IssuerRegistryTest is Test {
     }
 
     function test_isActiveIssuer_returnsFalseWhenRevoked() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         registry.revokeIssuer(issuer, "bad actor");
         assertFalse(registry.isActiveIssuer(issuer));
@@ -179,9 +146,7 @@ contract IssuerRegistryTest is Test {
     // ── Self-activation (emergency kill switch) ─────────────────────
 
     function test_setSelfActive_deactivate() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         assertTrue(registry.isActiveIssuer(issuer));
 
@@ -191,9 +156,7 @@ contract IssuerRegistryTest is Test {
     }
 
     function test_setSelfActive_reactivate() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         vm.prank(issuer);
         registry.setSelfActive(false);
@@ -213,9 +176,7 @@ contract IssuerRegistryTest is Test {
     // ── Renewal ─────────────────────────────────────────────────────────
 
     function test_renewIssuer() public {
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, IIssuerRegistry.VerificationMode.ECDSA_ATTESTATION, defaultExpiry, address(0), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
 
         uint64 newExpiry = defaultExpiry + 365 days;
         registry.renewIssuer(issuer, newExpiry);

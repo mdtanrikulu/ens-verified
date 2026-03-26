@@ -122,10 +122,10 @@ export async function issueRecord(
 }
 
 /**
- * Signs arbitrary attestation data with the wallet.
- * Used by issuers to create attestation signatures for proof bundles.
+ * Signs arbitrary proof data with the wallet.
+ * Used by issuers to create proof signatures for proof bundles.
  */
-export async function signAttestation(
+export async function signProof(
   walletClient: WalletClient<Transport, Chain, Account>,
   data: Hex
 ): Promise<Hex> {

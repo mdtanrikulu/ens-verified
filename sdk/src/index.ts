@@ -13,6 +13,7 @@ export {
   IssuerRegistryABI,
   ENSRegistryABI,
   TextResolverABI,
+  ProofVerifierABI,
 } from "./abi.js";
 
 // Issuer functions
@@ -20,7 +21,7 @@ export {
   createRecordRequest,
   getEIP712TypedData,
   issueRecord,
-  signAttestation,
+  signProof,
   revokeRecord,
 } from "./issuer.js";
 export type { CreateRecordRequestParams } from "./issuer.js";

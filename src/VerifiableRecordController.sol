@@ -11,7 +11,7 @@ import {ITextResolver} from "./interfaces/ITextResolver.sol";
 
 /// @title VerifiableRecordController
 /// @notice Orchestrates key derivation and resolver writes on behalf of authorized issuers.
-///         Proof data (ECDSA attestations / ZK proofs) lives off-chain at the issuer's
+///         Proof data (ECDSA proofs / ZK proofs) lives off-chain at the issuer's
 ///         specificationURI (from IssuerRegistry) — verifiers query the registry first,
 ///         then fetch and verify against the on-chain content key.
 contract VerifiableRecordController is IVerifiableRecordController, EIP712 {

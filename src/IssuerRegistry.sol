@@ -53,19 +53,18 @@ contract IssuerRegistry is IIssuerRegistry {
         address issuer,
         string calldata name,
         uint256 supportedRecordTypes,
-        VerificationMode mode,
         uint64 expires,
         address verifierContract,
         string calldata specificationURI
     ) external onlyRole(ROLE_ISSUER_ADMIN) {
         if (issuer == address(0)) revert ZeroAddress();
+        if (verifierContract == address(0)) revert ZeroAddress();
         if (_registered[issuer]) revert AlreadyRegistered();
         if (expires <= block.timestamp) revert InvalidExpiry();
 
         _issuers[issuer] = IssuerInfo({
             name: name,
             supportedRecordTypes: supportedRecordTypes,
-            verificationMode: mode,
             registeredAt: uint64(block.timestamp),
             expires: expires,
             active: true,
@@ -74,7 +73,7 @@ contract IssuerRegistry is IIssuerRegistry {
         });
         _registered[issuer] = true;
 
-        emit IssuerRegistered(issuer, name, supportedRecordTypes, uint8(mode), expires);
+        emit IssuerRegistered(issuer, name, supportedRecordTypes, expires, verifierContract);
     }
 
     function revokeIssuer(address issuer, string calldata reason) external onlyRole(ROLE_ISSUER_ADMIN) {
@@ -127,10 +126,5 @@ contract IssuerRegistry is IIssuerRegistry {
 
     function isActiveIssuer(address issuer) external view returns (bool) {
         return _registered[issuer] && _issuers[issuer].active && _issuers[issuer].expires > block.timestamp;
-    }
-
-    function getIssuerVerificationMode(address issuer) external view returns (VerificationMode) {
-        if (!_registered[issuer]) revert NotRegistered();
-        return _issuers[issuer].verificationMode;
     }
 }

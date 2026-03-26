@@ -1,7 +1,7 @@
 {
-  "registryAddress": "0xe26E6C5Cb47167627d6bC24705ddDc5a6ec22ACE",
-  "controllerAddress": "0x95bA2074cd84ea48aAa3DC553e663d98b9a756A4",
-  "resolverAddress": "0xFDF7c69db5Fd6370d5BC935d6be6CdB5376F5A39",
+  "registryAddress": "0x3f1b31cdc3d81F0e3a147da2681D51e13A2488C0",
+  "controllerAddress": "0x0B8253ec8ce305767D9D33D28e614244B7eA25c6",
+  "resolverAddress": "0xa288C1A26B6652E37C9627B6321A1428dC0c2430",
   "ensRegistryAddress": "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e",
   "issuerAddress": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
   "userAddress": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",

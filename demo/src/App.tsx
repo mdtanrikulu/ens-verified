@@ -40,8 +40,6 @@ interface DemoState {
   bundle: ProofBundle | null;
 }
 
-const VERIFICATION_MODES = ["ECDSA Attestation", "ZK Proof", "Hybrid"];
-
 // ── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -170,11 +168,9 @@ export default function App() {
               <Row label="Address" value={config.issuerAddress} mono />
               <Row label="Active" value={state.issuer.active ? "Yes" : "No"} />
               <Row
-                label="Verification Mode"
-                value={
-                  VERIFICATION_MODES[state.issuer.verificationMode] ??
-                  String(state.issuer.verificationMode)
-                }
+                label="Verifier Contract"
+                value={state.issuer.verifierContract}
+                mono
               />
               <Row
                 label="Specification URI"
@@ -240,8 +236,8 @@ export default function App() {
                   pass={state.verification.contentKeyMatch}
                 />
                 <CheckRow
-                  label="Attestation Valid"
-                  pass={state.verification.attestationValid}
+                  label="Proof Valid"
+                  pass={state.verification.proofValid}
                 />
                 <CheckRow
                   label="Signer Is Owner"
@@ -284,8 +280,8 @@ export default function App() {
                 mono
               />
               <Row
-                label="Attestation"
-                value={truncate(state.bundle.attestation, 42)}
+                label="Proof"
+                value={truncate(state.bundle.proof, 42)}
                 mono
               />
               <Row label="ENS Name" value={state.bundle.request.ensName} />

@@ -45,9 +45,9 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 | **User** | The owner (or controller) of an ENS name who consents to a record being written by signing an EIP-712 message. |
 | **Verifier** | Any party that reads a verifiable record from ENS and validates it against the on-chain content key and off-chain proof bundle. |
 | **Content Key** | A `bytes32` value derived via `keccak256` that cryptographically binds a record to a specific user signature, ENS name, resolver, record data, and issuer. Stored on-chain as the first field of the text record value. |
-| **Proof Bundle** | A JSON document stored off-chain at the issuer's `specificationURI` containing the full inputs needed to recompute the content key and verify the issuer's attestation. |
+| **Proof Bundle** | A JSON document stored off-chain at the issuer's `specificationURI` containing the full inputs needed to recompute the content key and verify the issuer's proof. |
 | **Record Type** | A human-readable string identifier (e.g., `"identity"`, `"kyc"`, `"credential"`) that categorizes the verifiable record. |
-| **Record Data Hash** | A `bytes32` keccak256 digest of the attestation payload. The actual payload lives in the proof bundle; only its hash appears on-chain. |
+| **Record Data Hash** | A `bytes32` keccak256 digest of the record payload. The actual payload lives in the proof bundle; only its hash appears on-chain. |
 | **Node** | The ENS namehash of the name, as defined in EIP-137. |
 
 ### 2. Record Key Format
@@ -117,7 +117,7 @@ Where:
 - `userSignature` is the raw bytes of the user's EIP-712 signature.
 - `keccak256(ensName)` is the keccak256 hash of the UTF-8 encoded ENS name string (e.g., `"alice.eth"`).
 - `resolver` is the resolver contract address (20 bytes, tightly packed per `abi.encodePacked`).
-- `recordDataHash` is the `bytes32` hash of the attestation payload.
+- `recordDataHash` is the `bytes32` hash of the record payload.
 - `issuer` is the issuer address (20 bytes, tightly packed per `abi.encodePacked`).
 
 The fixed-size portion is 104 bytes (32 + 20 + 32 + 20). Total input length is `len(userSignature) + 104`.
@@ -177,7 +177,7 @@ struct RecordRequest {
     string  ensName;        // Human-readable ENS name (e.g., "alice.eth")
     address resolver;       // Resolver contract address
     string  recordType;     // Record type identifier (e.g., "identity")
-    bytes32 recordDataHash; // keccak256 of the attestation payload
+    bytes32 recordDataHash; // keccak256 of the record payload
     address issuer;         // Issuer's Ethereum address
     uint64  expires;        // Unix timestamp; 0 = no expiration
     uint256 nonce;          // Replay protection nonce
@@ -299,9 +299,9 @@ A verifier MUST perform the following steps to validate a verifiable record. All
    ) external pure returns (bool);
    ```
 
-8. **Verify the issuer's attestation.** Validate the attestation in the proof bundle according to the issuer's `verificationMode` (Section 10). For `ECDSA_ATTESTATION`, recover the signer from the attestation and confirm it matches the issuer address. For `ZK_PROOF`, call the issuer's `verifierContract`. This specification defines the attestation *transport* (the proof bundle `attestation` field) but not application-specific validity semantics — what the attestation *means* is determined by the verifier's trust policy.
+8. **Verify the issuer's proof.** Call `verifierContract.verifyProof(proof, recordDataHash, issuer)` on the issuer's verifier contract (see Section 10). If the call returns `false` or reverts, the record is INVALID.
 
-9. **Verify name ownership.** Recover the signer address from the `userSignature` and the EIP-712 typed data (Section 5). Query the ENS registry for the current owner of the `node`. If the recovered signer does NOT match the current owner, the record is STALE — it was issued to a previous owner. Verifiers MUST treat ownership-mismatched records as invalid. This prevents a sold or transferred name from carrying attestations that belong to the previous owner.
+9. **Verify name ownership.** Recover the signer address from the `userSignature` and the EIP-712 typed data (Section 5). Query the ENS registry for the current owner of the `node`. If the recovered signer does NOT match the current owner, the record is STALE — it was issued to a previous owner. Verifiers MUST treat ownership-mismatched records as invalid. This prevents a sold or transferred name from carrying proofs that belong to the previous owner.
 
     ```
     signer = ecrecover(EIP712Digest(request), userSignature)
@@ -311,7 +311,7 @@ A verifier MUST perform the following steps to validate a verifiable record. All
 
 ### 8. Proof Bundle JSON Schema
 
-The proof bundle is a JSON document hosted at the issuer's `specificationURI` (registered in the IssuerRegistry). It MUST contain sufficient information for a verifier to recompute the content key and verify the issuer's attestation.
+The proof bundle is a JSON document hosted at the issuer's `specificationURI` (registered in the IssuerRegistry). It MUST contain sufficient information for a verifier to recompute the content key and verify the issuer's proof.
 
 The following schema is RECOMMENDED:
 
@@ -330,7 +330,7 @@ The following schema is RECOMMENDED:
   },
   "userSignature": "0x<hex-encoded signature>",
   "contentKey": "0x<bytes32 hex>",
-  "attestation": "0x<hex-encoded issuer attestation or ZK proof>"
+  "proof": "0x<hex-encoded issuer proof>"
 }
 ```
 
@@ -342,7 +342,7 @@ Field descriptions:
 | `request` | REQUIRED | The full `RecordRequest` fields, sufficient to reconstruct the EIP-712 struct hash. |
 | `userSignature` | REQUIRED | The user's EIP-712 signature over the `RecordRequest`. |
 | `contentKey` | REQUIRED | The derived content key. Included for convenience; verifiers MUST recompute it. |
-| `attestation` | REQUIRED | The issuer's attestation signature or zero-knowledge proof over the record data. The format depends on the issuer's `verificationMode`. |
+| `proof` | REQUIRED | The issuer's proof over the record data. The encoding depends on the issuer's `verifierContract` implementation (see Section 10). |
 
 Issuers MAY include additional fields. Verifiers MUST ignore unrecognized fields.
 
@@ -375,24 +375,38 @@ Each registered issuer has an associated `IssuerInfo` struct:
 struct IssuerInfo {
     string name;                          // Human-readable issuer name
     uint256 supportedRecordTypes;         // Bitmap of supported record types
-    VerificationMode verificationMode;    // ECDSA_ATTESTATION, ZK_PROOF, or HYBRID
     uint64 registeredAt;                  // Registration timestamp
     uint64 expires;                       // Expiration timestamp
     bool active;                          // Pause flag
-    address verifierContract;             // Optional on-chain verifier for ZK proofs
-    string specificationURI;              // URI to the issuer's specification document
+    address verifierContract;             // On-chain proof verifier (REQUIRED, cannot be address(0))
+    string specificationURI;              // URI to the issuer's proof bundle endpoint
 }
 ```
 
-#### Verification Modes
+#### Proof Verification
+
+Every issuer MUST have an on-chain verifier contract. The `registerIssuer` function MUST revert if `verifierContract` is `address(0)`. Verifiers MUST call the issuer's `verifierContract` to validate the `proof` field from the proof bundle.
+
+The verifier contract MUST implement the `IProofVerifier` interface:
 
 ```solidity
-enum VerificationMode {
-    ECDSA_ATTESTATION,   // 0 -- Issuer signs attestations with ECDSA
-    ZK_PROOF,            // 1 -- Issuer provides zero-knowledge proofs
-    HYBRID               // 2 -- Issuer supports both modes
+interface IProofVerifier {
+    function verifyProof(
+        bytes calldata proof,
+        bytes32 recordDataHash,
+        address issuer
+    ) external view returns (bool);
 }
 ```
+
+This interface is intentionally minimal and generic. It supports any verification mechanism that can be expressed as a Solidity `view` function:
+
+- **ECDSA proof**: Recover the signer from the proof signature and confirm it matches the issuer address.
+- **ZK proof verification**: Verify a zero-knowledge proof against public inputs.
+- **Multisig verification**: Check that the proof contains signatures from a quorum of co-signers.
+- **CCIP-Read (EIP-3668)**: The verifier contract MAY use CCIP-Read to offload computation off-chain while returning the result on-chain.
+
+The `proof` bytes are opaque to the protocol — their encoding is defined by the specific `IProofVerifier` implementation.
 
 #### Active Issuer Check
 
@@ -418,7 +432,7 @@ The deployer receives all three roles at construction time.
 
 | Function | Required Role | Description |
 |----------|--------------|-------------|
-| `registerIssuer(...)` | `ROLE_ISSUER_ADMIN` | Register a new issuer. Reverts if the address is already registered or the expiry is in the past. |
+| `registerIssuer(...)` | `ROLE_ISSUER_ADMIN` | Register a new issuer. Reverts if the issuer or verifier contract address is zero, the address is already registered, or the expiry is in the past. |
 | `revokeIssuer(address, string reason)` | `ROLE_ISSUER_ADMIN` | Permanently remove an issuer. Deletes the `IssuerInfo` and emits `IssuerRevoked` with the reason. |
 | `pauseIssuer(address)` | `ROLE_ISSUER_PAUSER` | Temporarily deactivate an issuer. Sets `active = false`. The issuer can be unpaused later. |
 | `unpauseIssuer(address)` | `ROLE_ISSUER_PAUSER` | Reactivate a paused issuer. Sets `active = true`. |
@@ -433,7 +447,6 @@ The deployer receives all three roles at construction time.
 |----------|-------------|
 | `getIssuer(address)` | Returns the full `IssuerInfo` struct. Reverts if the issuer is not registered. |
 | `isActiveIssuer(address)` | Returns `true` if the issuer is registered, not paused, and not expired. |
-| `getIssuerVerificationMode(address)` | Returns the issuer's `VerificationMode`. Reverts if not registered. |
 | `hasRoles(address, uint256)` | Returns `true` if the account holds any of the specified role bits. |
 
 ### 11. Resolver Authorization
@@ -510,7 +523,7 @@ The on-chain infrastructure guarantees:
 2. The issuer was authorized at issuance time (active in the registry).
 3. The record is bound to a specific name/resolver/issuer (content key).
 
-The semantic meaning and trustworthiness of the attestation payload (what the `recordDataHash` represents) is application-specific and determined by the verifier's trust policy regarding the specific issuer.
+The semantic meaning and trustworthiness of the record payload (what the `recordDataHash` represents) is application-specific and determined by the verifier's trust policy regarding the specific issuer.
 
 ---
 
@@ -522,7 +535,7 @@ Text records (EIP-634) are the most widely supported and flexible record type in
 
 ### Why Off-Chain Proofs?
 
-Storing full attestation signatures or zero-knowledge proofs on-chain would be prohibitively expensive and would leak information that some issuance flows (particularly ZK-based ones) are designed to keep private. The content key serves as a constant-size binding commitment: it is small enough to store on-chain (32 bytes, rendered as a 66-character hex string in the text record) while providing the cryptographic anchor needed for off-chain verification.
+Storing full proof signatures or zero-knowledge proofs on-chain would be prohibitively expensive and would leak information that some issuance flows (particularly ZK-based ones) are designed to keep private. The content key serves as a constant-size binding commitment: it is small enough to store on-chain (32 bytes, rendered as a 66-character hex string in the text record) while providing the cryptographic anchor needed for off-chain verification.
 
 ### Why Include the Resolver in the Content Key?
 
@@ -534,7 +547,7 @@ A dedicated registry contract (rather than, say, an allowlist inside the control
 
 - **Governance separation**: The DAO can manage issuer lifecycle independently of controller upgrades.
 - **Shared state**: Multiple controllers or future versions can reference the same registry.
-- **Rich metadata**: Issuers carry structured metadata (verification mode, specification URI, supported types) that would be awkward to embed in the controller.
+- **Rich metadata**: Issuers carry structured metadata (verifier contract, specification URI, supported types) that would be awkward to embed in the controller.
 
 ### Why Nonces per Signer (Not per Name)?
 
@@ -565,6 +578,8 @@ The reference implementation consists of the following contracts in this reposit
 | `IVerifiableRecordController` | `src/interfaces/IVerifiableRecordController.sol` | Interface definition with events, struct, and function signatures. |
 | `IssuerRegistry` | `src/IssuerRegistry.sol` | DAO-governed issuer whitelist with role-based access control. |
 | `IIssuerRegistry` | `src/interfaces/IIssuerRegistry.sol` | Interface definition for the issuer registry. |
+| `IProofVerifier` | `src/interfaces/IProofVerifier.sol` | Standard interface for on-chain proof verification. |
+| `ECDSAProofVerifier` | `src/verifiers/ECDSAProofVerifier.sol` | Reference `IProofVerifier` implementation using ECDSA signature recovery. |
 
 The test suite at `test/VerifiableRecordController_t.sol` demonstrates the complete issuance flow, authorization checks, replay protection, and copy attack prevention.
 

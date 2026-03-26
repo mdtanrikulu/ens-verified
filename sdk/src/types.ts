@@ -17,7 +17,7 @@ export interface ProofBundle {
   request: RecordRequest;
   userSignature: Hex;
   contentKey: Hex;
-  attestation: Hex;
+  proof: Hex;
 }
 
 /** Parsed on-chain text record value: "{contentKey} {expires}" */
@@ -30,7 +30,6 @@ export interface ParsedRecordValue {
 export interface IssuerInfo {
   name: string;
   supportedRecordTypes: bigint;
-  verificationMode: number;
   registeredAt: bigint;
   expires: bigint;
   active: boolean;
@@ -42,7 +41,7 @@ export interface IssuerInfo {
 export interface VerificationResult {
   valid: boolean;
   contentKeyMatch: boolean;
-  attestationValid: boolean;
+  proofValid: boolean;
   issuerActive: boolean;
   signerIsOwner: boolean;
   expired: boolean;
