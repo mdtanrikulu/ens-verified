@@ -72,7 +72,7 @@ const bundle = createProofBundle(request, userSignature, contentKey, proof);
 await uploadToStorage(JSON.stringify(bundle));
 ```
 
-The proof bundle lives at the issuer's `specificationURI` registered in `IssuerRegistry`. Verifiers get that URI from the registry — it's never stored on-chain in the text record.
+The proof bundle lives at the issuer's `specificationURI` registered in `IssuerRegistry` — either a URL (`https://`, `ipfs://`) or a contract address implementing `IProofBundleProvider` for on-chain retrieval. Verifiers get that URI from the registry — it's never stored in the text record.
 
 ---
 
@@ -113,9 +113,9 @@ console.log(result);
 1. getIssuer()       --> null or !active  --> return early, skip everything
 2. resolve record    --> read text record from resolver
 3. parse + expiry    --> "{contentKey} {expires}"
-4. fetch proof       --> from issuer's specificationURI
+4. fetch proof       --> from issuer's specificationURI (URL or IProofBundleProvider contract)
 5. contentKey match  --> recompute locally, compare to on-chain
-6. proof             --> structural check (mode-specific verification is delegated)
+6. proof             --> call verifierContract.verifyProof() on-chain (ECDSA, ZK, etc.)
 7. signer == owner   --> recover EIP-712 signer, compare to ENS registry owner
 ```
 
@@ -190,7 +190,7 @@ const { valid, errors } = validateProofBundle(bundle);
 | Data | Where | Why |
 |------|-------|-----|
 | `contentKey` + `expires` | ENS text record | Minimal on-chain footprint. The content key is the cryptographic anchor. |
-| Proof bundle | Issuer's `specificationURI` | Full proof data. Too expensive to store on-chain. |
+| Proof bundle | Issuer's `specificationURI` (URL or `IProofBundleProvider` contract) | Full proof data. Fetched via HTTP/IPFS or on-chain via CCIP-Read. |
 | Issuer info + `specificationURI` | IssuerRegistry | DAO-governed. Verifier queries this first to get proof bundle location. |
 | User's EIP-712 signature | Proof bundle (off-chain) | Proves user consent. Used to recompute content key. |
 
@@ -203,7 +203,7 @@ const { valid, errors } = validateProofBundle(bundle);
 | Type | Description |
 |------|-------------|
 | `RecordRequest` | Mirrors the Solidity struct — all fields for an issuance request |
-| `ProofBundle` | Off-chain proof data fetched from issuer's specificationURI |
+| `ProofBundle` | Proof data fetched from issuer's specificationURI (URL or on-chain provider) |
 | `ParsedRecordValue` | Parsed on-chain text record: `{ contentKey, expires }` |
 | `IssuerInfo` | Issuer metadata from the registry |
 | `VerificationResult` | Granular pass/fail for each verification step |
@@ -215,7 +215,7 @@ const { valid, errors } = validateProofBundle(bundle);
 | `createRecordRequest(params)` | Build a `RecordRequest` from inputs |
 | `getEIP712TypedData(request, controller, chainId)` | Get typed data for wallet signing |
 | `issueRecord(client, controller, request, sig)` | Submit issuance tx |
-| `signProof(client, data)` | Sign proof data for proof bundle |
+| `signProof(client, recordDataHash)` | Sign proof (ECDSA) for proof bundle |
 | `revokeRecord(client, controller, node, type)` | Revoke a record |
 
 ### Verifier Functions
@@ -246,5 +246,7 @@ const { valid, errors } = validateProofBundle(bundle);
 |--------|-------------|
 | `VerifiableRecordControllerABI` | Controller contract ABI |
 | `IssuerRegistryABI` | Registry contract ABI |
+| `ProofVerifierABI` | `IProofVerifier` interface ABI |
+| `ProofBundleProviderABI` | `IProofBundleProvider` interface ABI |
 | `ENSRegistryABI` | ENS Registry (owner lookup) |
 | `TextResolverABI` | Resolver text record ABI |
