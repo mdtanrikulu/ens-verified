@@ -86,7 +86,7 @@ Verifier                          Chain                     Proof Bundle Source
    │                                │                            │
    │─── verifyProof(proof, hash, ──►│                            │
    │    issuer) on verifierContract │                            │
-   │◄── true / false ──────────────│                            │
+   │◄── true / false ───────────────│                            │
    │                                │                            │
    │  4. Recover EIP-712 signer     │                            │
    │                                │                            │
