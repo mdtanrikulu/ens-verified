@@ -12,9 +12,5 @@ interface IProofVerifier {
     /// @param recordDataHash  The keccak256 hash of the attested payload.
     /// @param issuer  The issuer address that produced the proof.
     /// @return True if the proof is valid.
-    function verifyProof(
-        bytes calldata proof,
-        bytes32 recordDataHash,
-        address issuer
-    ) external view returns (bool);
+    function verifyProof(bytes calldata proof, bytes32 recordDataHash, address issuer) external view returns (bool);
 }

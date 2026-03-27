@@ -47,9 +47,7 @@ contract VerifiableRecordControllerTest is Test {
         resolverMallory = new MockResolver();
         verifier = new ECDSAProofVerifier();
 
-        registry.registerIssuer(
-            issuer, "Test Issuer", 1, defaultExpiry, address(verifier), ""
-        );
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -149,9 +147,7 @@ contract VerifiableRecordControllerTest is Test {
         IVerifiableRecordController.RecordRequest memory request = _buildRequest();
         bytes memory userSig = _signRequest(request, userPrivateKey);
 
-        registry.registerIssuer(
-            nonIssuer, "Other", 1, defaultExpiry, address(verifier), ""
-        );
+        registry.registerIssuer(nonIssuer, "Other", 1, defaultExpiry, address(verifier), "");
 
         vm.prank(nonIssuer);
         vm.expectRevert(VerifiableRecordController.IssuerMismatch.selector);

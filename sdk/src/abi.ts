@@ -247,6 +247,21 @@ export const ProofVerifierABI = [
   },
 ] as const;
 
+// ─── ProofBundleProvider ABI ─────────────────────────────────────────────────
+
+export const ProofBundleProviderABI = [
+  {
+    type: "function",
+    name: "getProofBundle",
+    inputs: [
+      { name: "node", type: "bytes32" },
+      { name: "recordType", type: "string" },
+    ],
+    outputs: [{ name: "", type: "bytes" }],
+    stateMutability: "view",
+  },
+] as const;
+
 // ─── ENS Registry ABI ────────────────────────────────────────────────────────
 
 export const ENSRegistryABI = [

@@ -1,5 +1,5 @@
 import type { Address, Hex, PublicClient, Transport, Chain } from "viem";
-import { recoverTypedDataAddress } from "viem";
+import { recoverTypedDataAddress, decodeAbiParameters } from "viem";
 import type {
   RecordRequest,
   ProofBundle,
@@ -7,13 +7,58 @@ import type {
   IssuerInfo,
   VerificationResult,
 } from "./types.js";
-import { TextResolverABI, IssuerRegistryABI, ENSRegistryABI, ProofVerifierABI } from "./abi.js";
+import { TextResolverABI, IssuerRegistryABI, ENSRegistryABI, ProofVerifierABI, ProofBundleProviderABI } from "./abi.js";
 import {
   computeContentKey,
   parseRecordValue as parseRecordValueUtil,
   buildRecordKey,
 } from "./utils.js";
 import { getEIP712TypedData } from "./issuer.js";
+
+/**
+ * Checks if a string looks like an Ethereum address (0x-prefixed, 42 chars, valid hex).
+ */
+function isContractAddress(uri: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(uri);
+}
+
+/**
+ * Decodes an ABI-encoded proof bundle returned by an IProofBundleProvider contract.
+ */
+function decodeProofBundle(data: Hex): ProofBundle {
+  const [node, ensName, resolver, recordType, recordDataHash, issuer, expires, nonce, userSignature, contentKey, proof] = decodeAbiParameters(
+    [
+      { name: "node", type: "bytes32" },
+      { name: "ensName", type: "string" },
+      { name: "resolver", type: "address" },
+      { name: "recordType", type: "string" },
+      { name: "recordDataHash", type: "bytes32" },
+      { name: "issuer", type: "address" },
+      { name: "expires", type: "uint64" },
+      { name: "nonce", type: "uint256" },
+      { name: "userSignature", type: "bytes" },
+      { name: "contentKey", type: "bytes32" },
+      { name: "proof", type: "bytes" },
+    ],
+    data
+  );
+
+  return {
+    request: {
+      node,
+      ensName,
+      resolver,
+      recordType,
+      recordDataHash,
+      issuer,
+      expires,
+      nonce,
+    },
+    userSignature: userSignature as Hex,
+    contentKey: contentKey as Hex,
+    proof: proof as Hex,
+  };
+}
 
 /**
  * Reads the text record from the resolver using key format `vr:{issuer}:{recordType}`.
@@ -257,10 +302,21 @@ export async function verifyRecord(
     }
   }
 
-  // Step 4: Fetch the off-chain proof bundle from issuer's specificationURI
+  // Step 4: Fetch the proof bundle
   let bundle: ProofBundle;
   try {
-    bundle = await fetchProofBundle(issuerInfo.specificationURI);
+    if (isContractAddress(issuerInfo.specificationURI)) {
+      // On-chain proof bundle provider (e.g., CCIP-Read for L2 storage proofs)
+      const rawBundle = await client.readContract({
+        address: issuerInfo.specificationURI as Address,
+        abi: ProofBundleProviderABI,
+        functionName: "getProofBundle",
+        args: [params.node, params.recordType],
+      });
+      bundle = decodeProofBundle(rawBundle as Hex);
+    } else {
+      bundle = await fetchProofBundle(issuerInfo.specificationURI);
+    }
   } catch {
     return result;
   }

@@ -45,7 +45,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 | **User** | The owner (or controller) of an ENS name who consents to a record being written by signing an EIP-712 message. |
 | **Verifier** | Any party that reads a verifiable record from ENS and validates it against the on-chain content key and off-chain proof bundle. |
 | **Content Key** | A `bytes32` value derived via `keccak256` that cryptographically binds a record to a specific user signature, ENS name, resolver, record data, and issuer. Stored on-chain as the first field of the text record value. |
-| **Proof Bundle** | A JSON document stored off-chain at the issuer's `specificationURI` containing the full inputs needed to recompute the content key and verify the issuer's proof. |
+| **Proof Bundle** | A document containing the full inputs needed to recompute the content key and verify the issuer's proof. Typically a JSON document stored off-chain at the issuer's `specificationURI`, but MAY also be served on-chain via an `IProofBundleProvider` contract when `specificationURI` is a contract address. |
 | **Record Type** | A human-readable string identifier (e.g., `"identity"`, `"kyc"`, `"credential"`) that categorizes the verifiable record. |
 | **Record Data Hash** | A `bytes32` keccak256 digest of the record payload. The actual payload lives in the proof bundle; only its hash appears on-chain. |
 | **Node** | The ENS namehash of the name, as defined in EIP-137. |
@@ -286,7 +286,7 @@ A verifier MUST perform the following steps to validate a verifiable record. All
 
 4. **Check expiration.** If `expires > 0` and `expires <= currentTimestamp`, the record is EXPIRED. Verifiers SHOULD treat expired records as invalid unless the application semantics dictate otherwise.
 
-5. **Fetch the proof bundle.** Retrieve the JSON document from the issuer's `specificationURI` (obtained in step 1). If the proof bundle is unavailable, the record CANNOT be verified. Verifiers SHOULD treat this as a verification failure.
+5. **Fetch the proof bundle.** Retrieve the proof bundle using the issuer's `specificationURI` (obtained in step 1). If `specificationURI` is a standard URI (e.g., `https://`, `ipfs://`), fetch the JSON document from that URL. If `specificationURI` is a contract address (matching `^0x[0-9a-fA-F]{40}$`), call `IProofBundleProvider.getProofBundle(node, recordType)` on that contract and ABI-decode the result (see Section 8). If the proof bundle is unavailable, the record CANNOT be verified. Verifiers SHOULD treat this as a verification failure.
 
 6. **Recompute the content key.** Using the `userSignature`, `ensName`, `resolver`, `recordDataHash`, and `issuer` from the proof bundle, recompute the content key as specified in Section 4.
 
@@ -346,6 +346,44 @@ Field descriptions:
 
 Issuers MAY include additional fields. Verifiers MUST ignore unrecognized fields.
 
+#### On-Chain Proof Bundle Provider (`IProofBundleProvider`)
+
+The `specificationURI` field in the Issuer Registry can be either:
+
+- **A standard URI** (e.g., `https://`, `ipfs://`) pointing to a JSON proof bundle as described above.
+- **An Ethereum contract address** -- a `0x`-prefixed, 42-character hex string (e.g., `0x1234567890abcdef1234567890abcdef12345678`).
+
+If `specificationURI` is a contract address, verifiers MUST call `IProofBundleProvider.getProofBundle(node, recordType)` on that contract to retrieve the ABI-encoded proof bundle. The issuer is implicit — the provider contract is registered per-issuer in the Issuer Registry.
+
+```solidity
+interface IProofBundleProvider {
+    function getProofBundle(
+        bytes32 node,
+        string calldata recordType
+    ) external view returns (bytes memory);
+}
+```
+
+The returned `bytes` value is ABI-encoded with the following parameters (in order):
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `node` | `bytes32` | ENS namehash of the name |
+| `ensName` | `string` | Human-readable ENS name |
+| `resolver` | `address` | Resolver contract address |
+| `recordType` | `string` | Record type identifier |
+| `recordDataHash` | `bytes32` | keccak256 of the record payload |
+| `issuer` | `address` | Issuer's Ethereum address |
+| `expires` | `uint64` | Unix timestamp; 0 = no expiration |
+| `nonce` | `uint256` | Replay protection nonce |
+| `userSignature` | `bytes` | The user's EIP-712 signature |
+| `contentKey` | `bytes32` | The derived content key |
+| `proof` | `bytes` | The issuer's proof |
+
+This supports **CCIP-Read (EIP-3668)**: the provider contract MAY revert with `OffchainLookup` to redirect retrieval to an off-chain gateway. This enables use cases such as L2 storage proofs, where the proof bundle is stored on an L2 chain and fetched via a CCIP-Read gateway without requiring the verifier to interact directly with the L2.
+
+Verifiers MUST detect the format of `specificationURI` (contract address vs. URI) and use the appropriate retrieval mechanism. A value matching the regex `^0x[0-9a-fA-F]{40}$` MUST be treated as a contract address.
+
 ### 9. Record Type Taxonomy
 
 The Issuer Registry tracks each issuer's supported record types as a `uint256` bitmap in the `supportedRecordTypes` field. The following bit assignments are RECOMMENDED:
@@ -379,7 +417,7 @@ struct IssuerInfo {
     uint64 expires;                       // Expiration timestamp
     bool active;                          // Pause flag
     address verifierContract;             // On-chain proof verifier (REQUIRED, cannot be address(0))
-    string specificationURI;              // URI to the issuer's proof bundle endpoint
+    string specificationURI;              // URL or contract address for proof bundle retrieval (see Section 8)
 }
 ```
 
@@ -472,6 +510,8 @@ Verifiable records are standard ENS text records. Any resolver that implements t
 - **Wildcard resolvers (ENSIP-10)** that resolve records for subdomains dynamically.
 
 No special bridge logic or resolver modifications are required. The `VerifiableRecordController` writes records via `setText`, and verifiers read them via `text` -- both standard resolver operations.
+
+Additionally, issuers MAY register an `IProofBundleProvider` contract address as their `specificationURI` (see Section 8). This contract can use CCIP-Read to serve proof bundles from L2 storage, enabling a fully on-chain proof retrieval path for cross-chain verification scenarios. The provider contract reverts with `OffchainLookup`, and CCIP-Read-aware clients transparently follow the gateway redirect to fetch the proof bundle from the L2.
 
 ### 13. Security Considerations
 
@@ -579,6 +619,7 @@ The reference implementation consists of the following contracts in this reposit
 | `IssuerRegistry` | `src/IssuerRegistry.sol` | DAO-governed issuer whitelist with role-based access control. |
 | `IIssuerRegistry` | `src/interfaces/IIssuerRegistry.sol` | Interface definition for the issuer registry. |
 | `IProofVerifier` | `src/interfaces/IProofVerifier.sol` | Standard interface for on-chain proof verification. |
+| `IProofBundleProvider` | `src/interfaces/IProofBundleProvider.sol` | Interface for on-chain proof bundle retrieval (supports CCIP-Read for L2 storage proofs). |
 | `ECDSAProofVerifier` | `src/verifiers/ECDSAProofVerifier.sol` | Reference `IProofVerifier` implementation using ECDSA signature recovery. |
 
 The test suite at `test/VerifiableRecordController_t.sol` demonstrates the complete issuance flow, authorization checks, replay protection, and copy attack prevention.

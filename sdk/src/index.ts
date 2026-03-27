@@ -14,6 +14,7 @@ export {
   ENSRegistryABI,
   TextResolverABI,
   ProofVerifierABI,
+  ProofBundleProviderABI,
 } from "./abi.js";
 
 // Issuer functions
