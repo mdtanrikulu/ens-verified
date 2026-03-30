@@ -27,10 +27,15 @@ import config from "./config.json";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-interface DemoState {
-  loading: boolean;
-  error: string | null;
-  owner: Address | null;
+interface IssuerConfig {
+  address: string;
+  recordType: string;
+  type: "ecdsa" | "zk";
+  label: string;
+}
+
+interface RecordState {
+  issuerConfig: IssuerConfig;
   recordKey: string | null;
   rawRecordValue: string | null;
   parsed: ParsedRecordValue | null;
@@ -40,6 +45,13 @@ interface DemoState {
   bundle: ProofBundle | null;
 }
 
+interface DemoState {
+  loading: boolean;
+  error: string | null;
+  owner: Address | null;
+  records: RecordState[];
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -47,13 +59,7 @@ export default function App() {
     loading: true,
     error: null,
     owner: null,
-    recordKey: null,
-    rawRecordValue: null,
-    parsed: null,
-    issuer: null,
-    verification: null,
-    signer: null,
-    bundle: null,
+    records: [],
   });
 
   useEffect(() => {
@@ -69,64 +75,67 @@ export default function App() {
     }) as PublicClient<Transport, Chain>;
 
     const node = config.node as Hex;
-    const issuerAddr = config.issuerAddress as Address;
     const resolverAddr = config.resolverAddress as Address;
     const registryAddr = config.registryAddress as Address;
     const ensRegistryAddr = config.ensRegistryAddress as Address;
     const controllerAddr = config.controllerAddress as Address;
 
-    // Fetch everything in parallel where possible
-    const [owner, issuerInfo, rawValue] = await Promise.all([
-      getNodeOwner(client, ensRegistryAddr, node),
-      getIssuerInfo(client, registryAddr, issuerAddr),
-      resolveRecord(client, resolverAddr, node, issuerAddr, config.recordType),
-    ]);
+    const owner = await getNodeOwner(client, ensRegistryAddr, node);
 
-    const recordKey = buildRecordKey(issuerAddr, config.recordType);
-    let parsed: ParsedRecordValue | null = null;
-    if (rawValue) {
-      parsed = parseRecordValue(rawValue);
-    }
+    const issuers = (config as any).issuers as IssuerConfig[];
 
-    // Fetch proof bundle and run verification in parallel
-    const [verification, bundle] = await Promise.all([
-      verifyRecord(client, {
-        resolverAddress: resolverAddr,
-        registryAddress: registryAddr,
-        ensRegistryAddress: ensRegistryAddr,
-        controllerAddress: controllerAddr,
-        chainId: config.chainId,
-        node,
-        issuer: issuerAddr,
-        recordType: config.recordType,
+    const records = await Promise.all(
+      issuers.map(async (issuerCfg): Promise<RecordState> => {
+        const issuerAddr = issuerCfg.address as Address;
+
+        const [issuerInfo, rawValue] = await Promise.all([
+          getIssuerInfo(client, registryAddr, issuerAddr),
+          resolveRecord(client, resolverAddr, node, issuerAddr, issuerCfg.recordType),
+        ]);
+
+        const recordKey = buildRecordKey(issuerAddr, issuerCfg.recordType);
+        const parsed = rawValue ? parseRecordValue(rawValue) : null;
+
+        const [verification, bundle] = await Promise.all([
+          verifyRecord(client, {
+            resolverAddress: resolverAddr,
+            registryAddress: registryAddr,
+            ensRegistryAddress: ensRegistryAddr,
+            controllerAddress: controllerAddr,
+            chainId: config.chainId,
+            node,
+            issuer: issuerAddr,
+            recordType: issuerCfg.recordType,
+          }),
+          issuerInfo?.specificationURI
+            ? fetchProofBundle(issuerInfo.specificationURI)
+            : Promise.resolve(null),
+        ]);
+
+        let signer: Address | null = null;
+        if (bundle) {
+          signer = await recoverRecordSigner(
+            bundle.request,
+            bundle.userSignature,
+            controllerAddr,
+            config.chainId,
+          );
+        }
+
+        return {
+          issuerConfig: issuerCfg,
+          recordKey,
+          rawRecordValue: rawValue,
+          parsed,
+          issuer: issuerInfo,
+          verification,
+          signer,
+          bundle,
+        };
       }),
-      issuerInfo?.specificationURI
-        ? fetchProofBundle(issuerInfo.specificationURI)
-        : Promise.resolve(null),
-    ]);
+    );
 
-    let signer: Address | null = null;
-    if (bundle) {
-      signer = await recoverRecordSigner(
-        bundle.request,
-        bundle.userSignature,
-        controllerAddr,
-        config.chainId,
-      );
-    }
-
-    setState({
-      loading: false,
-      error: null,
-      owner,
-      recordKey,
-      rawRecordValue: rawValue,
-      parsed,
-      issuer: issuerInfo,
-      verification,
-      signer,
-      bundle,
-    });
+    setState({ loading: false, error: null, owner, records });
   }
 
   if (state.loading) {
@@ -158,36 +167,7 @@ export default function App() {
     <div className="container">
       <h1>ENS Verifiable Records | Demo</h1>
 
-      {/* 3. Issuer Info */}
-      <div className="section">
-        <h2>Issuer Info</h2>
-        {state.issuer ? (
-          <table>
-            <tbody>
-              <Row label="Name" value={state.issuer.name} />
-              <Row label="Address" value={config.issuerAddress} mono />
-              <Row label="Active" value={state.issuer.active ? "Yes" : "No"} />
-              <Row
-                label="Verifier Contract"
-                value={state.issuer.verifierContract}
-                mono
-              />
-              <Row
-                label="Specification URI"
-                value={state.issuer.specificationURI}
-              />
-              <Row
-                label="Expires"
-                value={`${state.issuer.expires} (${new Date(Number(state.issuer.expires) * 1000).toISOString()})`}
-              />
-            </tbody>
-          </table>
-        ) : (
-          <p>Issuer not found</p>
-        )}
-      </div>
-
-      {/* 2. ENS Name Info */}
+      {/* ENS Name Info */}
       <div className="section">
         <h2>ENS Name Info</h2>
         <table>
@@ -200,19 +180,65 @@ export default function App() {
         </table>
       </div>
 
-      {/* 3. On-Chain Record */}
-      <div className="section">
-        <h2>On-Chain Record</h2>
+      {/* Records Grid */}
+      <div className="records-grid">
+        {state.records.map((rec) => (
+          <RecordCard key={rec.issuerConfig.address} rec={rec} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Record Card ──────────────────────────────────────────────────────────────
+
+function RecordCard({ rec }: { rec: RecordState }) {
+  const proofType = rec.issuerConfig.type;
+
+  return (
+    <div className="record-card">
+      <div className="card-header">
+        <span className={`badge badge-${proofType}`}>
+          {proofType.toUpperCase()}
+        </span>
+        <span className="card-title">{rec.issuerConfig.label}</span>
+      </div>
+
+      {/* Issuer Info */}
+      <div className="card-section">
+        <h3>Issuer Info</h3>
+        {rec.issuer ? (
+          <table>
+            <tbody>
+              <Row label="Name" value={rec.issuer.name} />
+              <Row label="Address" value={rec.issuerConfig.address} mono />
+              <Row label="Active" value={rec.issuer.active ? "Yes" : "No"} />
+              <Row
+                label="Verifier"
+                value={rec.issuer.verifierContract}
+                mono
+              />
+              <Row label="Spec URI" value={rec.issuer.specificationURI} />
+            </tbody>
+          </table>
+        ) : (
+          <p>Issuer not found</p>
+        )}
+      </div>
+
+      {/* On-Chain Record */}
+      <div className="card-section">
+        <h3>On-Chain Record</h3>
         <table>
           <tbody>
-            <Row label="Record Key" value={state.recordKey} mono />
-            <Row label="Raw Value" value={state.rawRecordValue} mono />
-            <Row label="Content Key" value={state.parsed?.contentKey} mono />
+            <Row label="Record Key" value={rec.recordKey} mono />
+            <Row label="Raw Value" value={rec.rawRecordValue} mono />
+            <Row label="Content Key" value={rec.parsed?.contentKey} mono />
             <Row
               label="Expires"
               value={
-                state.parsed
-                  ? `${state.parsed.expires} (${new Date(Number(state.parsed.expires) * 1000).toISOString()})`
+                rec.parsed
+                  ? `${rec.parsed.expires} (${new Date(Number(rec.parsed.expires) * 1000).toISOString()})`
                   : null
               }
             />
@@ -220,45 +246,45 @@ export default function App() {
         </table>
       </div>
 
-      {/* 4. Verification Result */}
-      <div className="section">
-        <h2>Verification Result</h2>
-        {state.verification ? (
+      {/* Verification Result */}
+      <div className="card-section">
+        <h3>Verification Result</h3>
+        {rec.verification ? (
           <>
             <table>
               <tbody>
                 <CheckRow
                   label="Issuer Active"
-                  pass={state.verification.issuerActive}
+                  pass={rec.verification.issuerActive}
                 />
                 <CheckRow
                   label="Content Key Match"
-                  pass={state.verification.contentKeyMatch}
+                  pass={rec.verification.contentKeyMatch}
                 />
                 <CheckRow
                   label="Proof Valid"
-                  pass={state.verification.proofValid}
+                  pass={rec.verification.proofValid}
                 />
                 <CheckRow
                   label="Signer Is Owner"
-                  pass={state.verification.signerIsOwner}
+                  pass={rec.verification.signerIsOwner}
                 />
                 <CheckRow
                   label="Not Expired"
-                  pass={!state.verification.expired}
+                  pass={!rec.verification.expired}
                 />
               </tbody>
             </table>
             <div
-              className={`verdict ${state.verification.valid ? "pass" : "fail"}`}
+              className={`verdict ${rec.verification.valid ? "pass" : "fail"}`}
             >
-              {state.verification.valid
+              {rec.verification.valid
                 ? "VALID — All checks passed"
                 : "INVALID — One or more checks failed"}
             </div>
-            {state.signer && (
+            {rec.signer && (
               <p className="signer-info">
-                Recovered signer: <code>{state.signer}</code>
+                Recovered signer: <code>{rec.signer}</code>
               </p>
             )}
           </>
@@ -267,39 +293,31 @@ export default function App() {
         )}
       </div>
 
-      {/* 5. Proof Bundle */}
-      <div className="section">
-        <h2>Proof Bundle</h2>
-        {state.bundle ? (
+      {/* Proof Bundle */}
+      <div className="card-section">
+        <h3>Proof Bundle</h3>
+        {rec.bundle ? (
           <table>
             <tbody>
-              <Row label="Content Key" value={state.bundle.contentKey} mono />
+              <Row label="Content Key" value={rec.bundle.contentKey} mono />
               <Row
                 label="User Signature"
-                value={truncate(state.bundle.userSignature, 42)}
+                value={truncate(rec.bundle.userSignature, 42)}
                 mono
               />
               <Row
                 label="Proof"
-                value={truncate(state.bundle.proof, 42)}
+                value={truncate(rec.bundle.proof, 42)}
                 mono
               />
-              <Row label="ENS Name" value={state.bundle.request.ensName} />
+              <Row label="ENS Name" value={rec.bundle.request.ensName} />
+              <Row label="Record Type" value={rec.bundle.request.recordType} />
               <Row
-                label="Record Type"
-                value={state.bundle.request.recordType}
-              />
-              <Row
-                label="Record Data Hash"
-                value={state.bundle.request.recordDataHash}
+                label="Data Hash"
+                value={rec.bundle.request.recordDataHash}
                 mono
               />
-              <Row label="Issuer" value={state.bundle.request.issuer} mono />
-              <Row
-                label="Expires"
-                value={String(state.bundle.request.expires)}
-              />
-              <Row label="Nonce" value={String(state.bundle.request.nonce)} />
+              <Row label="Issuer" value={rec.bundle.request.issuer} mono />
             </tbody>
           </table>
         ) : (

@@ -1,13 +1,25 @@
 {
-  "registryAddress": "0x3f1b31cdc3d81F0e3a147da2681D51e13A2488C0",
-  "controllerAddress": "0x0B8253ec8ce305767D9D33D28e614244B7eA25c6",
-  "resolverAddress": "0xa288C1A26B6652E37C9627B6321A1428dC0c2430",
+  "registryAddress": "0xDdcCd8A0143204896A88627aBB24683eceb131C7",
+  "controllerAddress": "0x712E3797117d64b1bb96053eB5C111643A57f1F8",
+  "resolverAddress": "0xe0105941Ee10cF0d3200845bE1FDb206BE64685D",
   "ensRegistryAddress": "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e",
-  "issuerAddress": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
   "userAddress": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
   "ensName": "ensverify.eth",
   "node": "0x0de621a3a24abe603c5d848b90f3e79b3a38a328025b1f62ebf8daa086606737",
-  "recordType": "github",
   "chainId": 1,
-  "rpcUrl": "http://127.0.0.1:8545"
+  "rpcUrl": "http://127.0.0.1:8545",
+  "issuers": [
+    {
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "recordType": "github",
+      "type": "ecdsa",
+      "label": "ECDSA Issuer"
+    },
+    {
+      "address": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "recordType": "commitment",
+      "type": "zk",
+      "label": "ZK Issuer"
+    }
+  ]
 }

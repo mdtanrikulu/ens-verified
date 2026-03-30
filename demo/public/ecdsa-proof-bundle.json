@@ -1,0 +1,15 @@
+{
+  "request": {
+    "node": "0x0de621a3a24abe603c5d848b90f3e79b3a38a328025b1f62ebf8daa086606737",
+    "ensName": "ensverify.eth",
+    "resolver": "0xe0105941Ee10cF0d3200845bE1FDb206BE64685D",
+    "recordType": "github",
+    "recordDataHash": "0xfe1ad0fa96da6334fd9ceb7d9da97f9a729739797d5f6d835e1c8223c9f0bbdb",
+    "issuer": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "expires": "1806429383",
+    "nonce": "0"
+  },
+  "userSignature": "0x7d1940ef673f7f347091a46809624156f8c99f53b411d40bca2a3fef6eccbdca3d6893d7994ab9193bcceaa0ae502bc41cdc891b2970d038501ba61bee3668981c",
+  "contentKey": "0xb6bfa4f1e31d83db0b1eaef24b66fe9277b488edf9fc798c534fa8f14a4f09ef",
+  "proof": "0x6aa5f49e436f9ab6a4753582789207c00be43e14e5d7248ae47b69ea0a2ec577622c43ba0f25858ee079d841d151c4dacacde100608b0d8f76655c8d011961831b"
+}

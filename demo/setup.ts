@@ -2,7 +2,7 @@
  * ENS Verifiable Records — Local Demo Setup
  *
  * Deploys contracts on an Anvil mainnet fork, registers an ENS name,
- * issues a verifiable record, and writes the proof bundle + config for the frontend.
+ * issues two verifiable records (ECDSA + ZK), and writes proof bundles + config.
  *
  * Usage:
  *   anvil --fork-url $FORK_URL          (Terminal 1)
@@ -22,11 +22,14 @@ import {
   toHex,
   toBytes,
   getAddress,
+  encodeAbiParameters,
   type Hex,
   type Address,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
+// @ts-ignore — snarkjs has no types
+import * as snarkjs from "snarkjs";
 
 import {
   IssuerRegistryABI,
@@ -60,13 +63,24 @@ const RPC_URL = "http://127.0.0.1:8545";
 const ENS_REGISTRY = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e" as Address;
 const BASE_REGISTRAR = "0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85" as Address;
 const ENS_NAME = "ensverify.eth";
-const RECORD_TYPE = "github";
-const CLAIM_PAYLOAD = "github:ensverify";
+
+// ECDSA issuer
+const ECDSA_RECORD_TYPE = "github";
+const ECDSA_CLAIM_PAYLOAD = "github:ensverify";
+
+// ZK issuer
+const ZK_RECORD_TYPE = "commitment";
+const ZK_SECRET = "42"; // The secret known to the ZK issuer
+
+// Circuit artifacts
+const CIRCUIT_WASM = resolve(ROOT, "circuits/build/commitment_js/commitment.wasm");
+const CIRCUIT_ZKEY = resolve(ROOT, "circuits/build/commitment_final.zkey");
 
 // Anvil default private keys
 const DAO_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
-const ISSUER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as Hex;
+const ECDSA_ISSUER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as Hex;
 const USER_KEY = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" as Hex;
+const ZK_ISSUER_KEY = "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6" as Hex;
 
 // Minimal ENS registry ABI for setSubnodeOwner / setResolver
 const ENSRegistryFullABI = [
@@ -116,8 +130,9 @@ const testClient = createTestClient({
 });
 
 const daoAccount = privateKeyToAccount(DAO_KEY);
-const issuerAccount = privateKeyToAccount(ISSUER_KEY);
+const ecdsaIssuerAccount = privateKeyToAccount(ECDSA_ISSUER_KEY);
 const userAccount = privateKeyToAccount(USER_KEY);
+const zkIssuerAccount = privateKeyToAccount(ZK_ISSUER_KEY);
 
 const daoClient = createWalletClient({
   account: daoAccount,
@@ -125,14 +140,20 @@ const daoClient = createWalletClient({
   transport,
 });
 
-const issuerClient = createWalletClient({
-  account: issuerAccount,
+const ecdsaIssuerClient = createWalletClient({
+  account: ecdsaIssuerAccount,
   chain: mainnet,
   transport,
 });
 
 const userClient = createWalletClient({
   account: userAccount,
+  chain: mainnet,
+  transport,
+});
+
+const zkIssuerClient = createWalletClient({
+  account: zkIssuerAccount,
   chain: mainnet,
   transport,
 });
@@ -183,7 +204,9 @@ async function main() {
   const registryArtifact = readArtifact("out/IssuerRegistry.sol/IssuerRegistry.json");
   const controllerArtifact = readArtifact("out/VerifiableRecordController.sol/VerifiableRecordController.json");
   const resolverArtifact = readArtifact("out/MockResolver.sol/MockResolver.json");
-  const verifierArtifact = readArtifact("out/ECDSAProofVerifier.sol/ECDSAProofVerifier.json");
+  const ecdsaVerifierArtifact = readArtifact("out/ECDSAProofVerifier.sol/ECDSAProofVerifier.json");
+  const groth16Artifact = readArtifact("out/Groth16Verifier.sol/Groth16Verifier.json");
+  const zkVerifierArtifact = readArtifact("out/ZkCommitmentVerifier.sol/ZkCommitmentVerifier.json");
 
   const registryAddress = await deploy(registryArtifact);
   console.log(`   IssuerRegistry:             ${registryAddress}`);
@@ -194,32 +217,56 @@ async function main() {
   const resolverAddress = await deploy(resolverArtifact);
   console.log(`   MockResolver:               ${resolverAddress}`);
 
-  const verifierAddress = await deploy(verifierArtifact);
-  console.log(`   ECDSAProofVerifier:         ${verifierAddress}`);
+  const ecdsaVerifierAddress = await deploy(ecdsaVerifierArtifact);
+  console.log(`   ECDSAProofVerifier:         ${ecdsaVerifierAddress}`);
 
-  // ── Step 2: Register issuer ────────────────────────────────────────────
+  const groth16Address = await deploy(groth16Artifact);
+  console.log(`   Groth16Verifier:            ${groth16Address}`);
 
-  console.log("\n2. Registering issuer...");
+  const zkVerifierAddress = await deploy(zkVerifierArtifact, [groth16Address]);
+  console.log(`   ZkCommitmentVerifier:       ${zkVerifierAddress}`);
+
+  // ── Step 2: Register issuers ─────────────────────────────────────────
+
+  console.log("\n2. Registering issuers...");
 
   const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
   const oneYear = 365n * 24n * 60n * 60n;
   const issuerExpires = nowSeconds + oneYear;
 
-  const registerHash = await daoClient.writeContract({
+  // ECDSA issuer
+  const registerEcdsaHash = await daoClient.writeContract({
     address: registryAddress,
     abi: IssuerRegistryABI,
     functionName: "registerIssuer",
     args: [
-      issuerAccount.address,
-      "Demo Issuer",
-      1n,                                                    // supportedRecordTypes
-      issuerExpires,                                         // expires
-      verifierAddress,                                       // verifierContract
-      "http://localhost:5173/proof-bundle.json",             // specificationURI
+      ecdsaIssuerAccount.address,
+      "ECDSA Demo Issuer",
+      1n,
+      issuerExpires,
+      ecdsaVerifierAddress,
+      "http://localhost:5173/ecdsa-proof-bundle.json",
     ],
   });
-  await publicClient.waitForTransactionReceipt({ hash: registerHash });
-  console.log(`   Issuer registered: ${issuerAccount.address}`);
+  await publicClient.waitForTransactionReceipt({ hash: registerEcdsaHash });
+  console.log(`   ECDSA Issuer: ${ecdsaIssuerAccount.address}`);
+
+  // ZK issuer
+  const registerZkHash = await daoClient.writeContract({
+    address: registryAddress,
+    abi: IssuerRegistryABI,
+    functionName: "registerIssuer",
+    args: [
+      zkIssuerAccount.address,
+      "ZK Demo Issuer",
+      2n,
+      issuerExpires,
+      zkVerifierAddress,
+      "http://localhost:5173/zk-proof-bundle.json",
+    ],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: registerZkHash });
+  console.log(`   ZK Issuer:    ${zkIssuerAccount.address}`);
 
   // ── Step 3: Register ENS name on fork ──────────────────────────────────
 
@@ -229,7 +276,6 @@ async function main() {
   const ethNode = namehash("eth");
   const label = labelhash("ensverify");
 
-  // Impersonate the base registrar to assign the name
   await testClient.impersonateAccount({ address: BASE_REGISTRAR });
   await testClient.setBalance({ address: BASE_REGISTRAR, value: 10n ** 18n });
 
@@ -246,10 +292,8 @@ async function main() {
     args: [ethNode, label, userAccount.address],
   });
   await publicClient.waitForTransactionReceipt({ hash: subnodeHash });
-
   await testClient.stopImpersonatingAccount({ address: BASE_REGISTRAR });
 
-  // Set resolver
   const setResolverHash = await userClient.writeContract({
     address: ENS_REGISTRY,
     abi: ENSRegistryFullABI,
@@ -258,7 +302,6 @@ async function main() {
   });
   await publicClient.waitForTransactionReceipt({ hash: setResolverHash });
 
-  // Verify ownership
   const owner = await publicClient.readContract({
     address: ENS_REGISTRY,
     abi: ENSRegistryFullABI,
@@ -268,100 +311,206 @@ async function main() {
   console.log(`   ${ENS_NAME} owner: ${owner}`);
   console.log(`   Resolver set to:  ${resolverAddress}`);
 
-  // ── Step 4: Issue record ───────────────────────────────────────────────
+  // ── Step 4: Issue ECDSA record ────────────────────────────────────────
 
-  console.log("\n4. Issuing verifiable record...");
+  console.log("\n4. Issuing ECDSA record...");
 
-  const recordDataHash = keccak256(toHex(toBytes(CLAIM_PAYLOAD)));
+  const ecdsaRecordDataHash = keccak256(toHex(toBytes(ECDSA_CLAIM_PAYLOAD)));
+  const recordExpires = nowSeconds + oneYear;
 
-  // Read nonce from controller
-  const nonce = await publicClient.readContract({
+  const ecdsaNonce = await publicClient.readContract({
     address: controllerAddress,
     abi: VerifiableRecordControllerABI,
     functionName: "nonces",
     args: [userAccount.address],
   });
 
-  const recordExpires = nowSeconds + oneYear;
-
-  const request = createRecordRequest({
+  const ecdsaRequest = createRecordRequest({
     node,
     ensName: ENS_NAME,
     resolver: resolverAddress,
-    recordType: RECORD_TYPE,
-    recordDataHash,
-    issuer: issuerAccount.address,
+    recordType: ECDSA_RECORD_TYPE,
+    recordDataHash: ecdsaRecordDataHash,
+    issuer: ecdsaIssuerAccount.address,
     expires: recordExpires,
-    nonce,
+    nonce: ecdsaNonce,
   });
 
-  // User signs consent via EIP-712
-  const typedData = getEIP712TypedData(request, controllerAddress, 1);
-  const userSignature = await userClient.signTypedData({
-    domain: typedData.domain,
-    types: typedData.types,
-    primaryType: typedData.primaryType,
-    message: typedData.message,
+  const ecdsaTypedData = getEIP712TypedData(ecdsaRequest, controllerAddress, 1);
+  const ecdsaUserSig = await userClient.signTypedData({
+    domain: ecdsaTypedData.domain,
+    types: ecdsaTypedData.types,
+    primaryType: ecdsaTypedData.primaryType,
+    message: ecdsaTypedData.message,
   });
 
-  // Issuer submits the record on-chain
-  const issueTxHash = await issueRecord(
-    issuerClient,
+  const ecdsaIssueTxHash = await issueRecord(
+    ecdsaIssuerClient,
     controllerAddress,
-    request,
-    userSignature
+    ecdsaRequest,
+    ecdsaUserSig,
   );
-  await publicClient.waitForTransactionReceipt({ hash: issueTxHash });
-  console.log(`   Record issued (tx: ${issueTxHash.slice(0, 18)}...)`);
+  await publicClient.waitForTransactionReceipt({ hash: ecdsaIssueTxHash });
+  console.log(`   ECDSA record issued (tx: ${ecdsaIssueTxHash.slice(0, 18)}...)`);
 
-  // ── Step 5: Create proof bundle ────────────────────────────────────────
+  // ── Step 5: Generate ZK proof + issue ZK record ───────────────────────
 
-  console.log("\n5. Creating proof bundle...");
+  console.log("\n5. Generating ZK proof and issuing ZK record...");
 
-  const contentKey = computeContentKey(request, userSignature);
-  const proof = await signProof(issuerClient, recordDataHash);
-  const bundle = createProofBundle(request, userSignature, contentKey, proof);
+  // Generate Groth16 proof: proves knowledge of secret where Poseidon(secret) == commitment
+  const { proof: zkProofData, publicSignals } = await snarkjs.groth16.fullProve(
+    { secret: ZK_SECRET },
+    CIRCUIT_WASM,
+    CIRCUIT_ZKEY,
+  );
+  const commitment = BigInt(publicSignals[0]);
+  console.log(`   Poseidon commitment: ${commitment}`);
 
-  // Serialize bigints to strings for JSON
-  const serializedBundle = {
-    request: {
-      ...bundle.request,
-      expires: bundle.request.expires.toString(),
-      nonce: bundle.request.nonce.toString(),
-    },
-    userSignature: bundle.userSignature,
-    contentKey: bundle.contentKey,
-    proof: bundle.proof,
-  };
+  // Verify proof locally before proceeding
+  const vkey = JSON.parse(readFileSync(resolve(ROOT, "circuits/build/verification_key.json"), "utf-8"));
+  const localValid = await snarkjs.groth16.verify(vkey, publicSignals, zkProofData);
+  console.log(`   Local proof verification: ${localValid ? "PASS" : "FAIL"}`);
+  if (!localValid) throw new Error("ZK proof failed local verification");
+
+  // The commitment (Poseidon hash) becomes our recordDataHash
+  const zkRecordDataHash = ("0x" + commitment.toString(16).padStart(64, "0")) as Hex;
+
+  const zkNonce = await publicClient.readContract({
+    address: controllerAddress,
+    abi: VerifiableRecordControllerABI,
+    functionName: "nonces",
+    args: [userAccount.address],
+  });
+
+  const zkRequest = createRecordRequest({
+    node,
+    ensName: ENS_NAME,
+    resolver: resolverAddress,
+    recordType: ZK_RECORD_TYPE,
+    recordDataHash: zkRecordDataHash,
+    issuer: zkIssuerAccount.address,
+    expires: recordExpires,
+    nonce: zkNonce,
+  });
+
+  const zkTypedData = getEIP712TypedData(zkRequest, controllerAddress, 1);
+  const zkUserSig = await userClient.signTypedData({
+    domain: zkTypedData.domain,
+    types: zkTypedData.types,
+    primaryType: zkTypedData.primaryType,
+    message: zkTypedData.message,
+  });
+
+  const zkIssueTxHash = await issueRecord(
+    zkIssuerClient,
+    controllerAddress,
+    zkRequest,
+    zkUserSig,
+  );
+  await publicClient.waitForTransactionReceipt({ hash: zkIssueTxHash });
+  console.log(`   ZK record issued (tx: ${zkIssueTxHash.slice(0, 18)}...)`);
+
+  // ── Step 6: Create proof bundles ─────────────────────────────────────
+
+  console.log("\n6. Creating proof bundles...");
 
   mkdirSync(resolve(__dirname, "public"), { recursive: true });
+
+  // ECDSA proof bundle
+  const ecdsaContentKey = computeContentKey(ecdsaRequest, ecdsaUserSig);
+  const ecdsaProof = await signProof(ecdsaIssuerClient, ecdsaRecordDataHash);
+  const ecdsaBundle = createProofBundle(ecdsaRequest, ecdsaUserSig, ecdsaContentKey, ecdsaProof);
+
   writeFileSync(
-    resolve(__dirname, "public", "proof-bundle.json"),
-    JSON.stringify(serializedBundle, null, 2)
+    resolve(__dirname, "public", "ecdsa-proof-bundle.json"),
+    JSON.stringify({
+      request: {
+        ...ecdsaBundle.request,
+        expires: ecdsaBundle.request.expires.toString(),
+        nonce: ecdsaBundle.request.nonce.toString(),
+      },
+      userSignature: ecdsaBundle.userSignature,
+      contentKey: ecdsaBundle.contentKey,
+      proof: ecdsaBundle.proof,
+    }, null, 2),
   );
-  console.log("   Written to public/proof-bundle.json");
+  console.log("   Written: public/ecdsa-proof-bundle.json");
 
-  // ── Step 6: Write config.json ──────────────────────────────────────────
+  // ZK proof bundle — encode Groth16 proof as ABI bytes
+  // IMPORTANT: snarkjs pi_b inner arrays must be reversed for Solidity
+  const pA: [bigint, bigint] = [
+    BigInt(zkProofData.pi_a[0]),
+    BigInt(zkProofData.pi_a[1]),
+  ];
+  const pB: [[bigint, bigint], [bigint, bigint]] = [
+    [BigInt(zkProofData.pi_b[0][1]), BigInt(zkProofData.pi_b[0][0])],
+    [BigInt(zkProofData.pi_b[1][1]), BigInt(zkProofData.pi_b[1][0])],
+  ];
+  const pC: [bigint, bigint] = [
+    BigInt(zkProofData.pi_c[0]),
+    BigInt(zkProofData.pi_c[1]),
+  ];
 
-  console.log("\n6. Writing config...");
+  const zkProofBytes = encodeAbiParameters(
+    [
+      { type: "uint256[2]", name: "pA" },
+      { type: "uint256[2][2]", name: "pB" },
+      { type: "uint256[2]", name: "pC" },
+    ],
+    [pA, pB, pC],
+  );
+
+  const zkContentKey = computeContentKey(zkRequest, zkUserSig);
+  const zkBundle = createProofBundle(zkRequest, zkUserSig, zkContentKey, zkProofBytes);
+
+  writeFileSync(
+    resolve(__dirname, "public", "zk-proof-bundle.json"),
+    JSON.stringify({
+      request: {
+        ...zkBundle.request,
+        expires: zkBundle.request.expires.toString(),
+        nonce: zkBundle.request.nonce.toString(),
+      },
+      userSignature: zkBundle.userSignature,
+      contentKey: zkBundle.contentKey,
+      proof: zkBundle.proof,
+    }, null, 2),
+  );
+  console.log("   Written: public/zk-proof-bundle.json");
+
+  // ── Step 7: Write config.json ────────────────────────────────────────
+
+  console.log("\n7. Writing config...");
 
   const config = {
     registryAddress,
     controllerAddress,
     resolverAddress,
     ensRegistryAddress: ENS_REGISTRY,
-    issuerAddress: issuerAccount.address,
     userAddress: userAccount.address,
     ensName: ENS_NAME,
     node,
-    recordType: RECORD_TYPE,
     chainId: 1,
     rpcUrl: RPC_URL,
+    issuers: [
+      {
+        address: ecdsaIssuerAccount.address,
+        recordType: ECDSA_RECORD_TYPE,
+        type: "ecdsa",
+        label: "ECDSA Issuer",
+      },
+      {
+        address: zkIssuerAccount.address,
+        recordType: ZK_RECORD_TYPE,
+        type: "zk",
+        label: "ZK Issuer",
+      },
+    ],
   };
 
   writeFileSync(
     resolve(__dirname, "src", "config.json"),
-    JSON.stringify(config, null, 2)
+    JSON.stringify(config, null, 2),
   );
   console.log("   Written to src/config.json");
 
@@ -371,20 +520,26 @@ async function main() {
   console.log("  Setup Complete!");
   console.log("═══════════════════════════════════════════════════════════");
   console.log(`
-  Addresses:
+  Contracts:
     IssuerRegistry:             ${registryAddress}
     VerifiableRecordController: ${controllerAddress}
     MockResolver:               ${resolverAddress}
-    ENS Registry:               ${ENS_REGISTRY}
+    ECDSAProofVerifier:         ${ecdsaVerifierAddress}
+    Groth16Verifier:            ${groth16Address}
+    ZkCommitmentVerifier:       ${zkVerifierAddress}
 
   Actors:
-    DAO:    ${daoAccount.address}
-    Issuer: ${issuerAccount.address}
-    User:   ${userAccount.address}
+    DAO:           ${daoAccount.address}
+    ECDSA Issuer:  ${ecdsaIssuerAccount.address}
+    ZK Issuer:     ${zkIssuerAccount.address}
+    User:          ${userAccount.address}
+
+  Records:
+    ECDSA: vr:${ecdsaIssuerAccount.address}:${ECDSA_RECORD_TYPE}
+    ZK:    vr:${zkIssuerAccount.address}:${ZK_RECORD_TYPE}
 
   ENS Name: ${ENS_NAME}
   Node:     ${node}
-  Record:   ${RECORD_TYPE} → ${CLAIM_PAYLOAD}
 
   Next steps:
     npm run dev          → http://localhost:5173
