@@ -2,3 +2,5 @@ node_modules/
 build/*.ptau
 build/*.r1cs
 build/*.sym
+build/*.zkey
+build/*_js/
