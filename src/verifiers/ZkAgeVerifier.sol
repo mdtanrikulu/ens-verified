@@ -44,13 +44,13 @@ contract ZkAgeVerifier is IProofVerifier {
         bytes calldata proof,
         bytes32 recordDataHash,
         address /* issuer */
-    ) external view returns (bool) {
-        (
-            uint256[2] memory pA,
-            uint256[2][2] memory pB,
-            uint256[2] memory pC,
-            uint256 currentDate
-        ) = abi.decode(proof, (uint256[2], uint256[2][2], uint256[2], uint256));
+    )
+        external
+        view
+        returns (bool)
+    {
+        (uint256[2] memory pA, uint256[2][2] memory pB, uint256[2] memory pC, uint256 currentDate) =
+            abi.decode(proof, (uint256[2], uint256[2][2], uint256[2], uint256));
 
         // Reject proofs with a future currentDate (with small clock drift tolerance)
         if (currentDate > block.timestamp + MAX_CLOCK_DRIFT) {
@@ -59,8 +59,8 @@ contract ZkAgeVerifier is IProofVerifier {
 
         // Reconstruct public signals: [birthdayHash, isAdult, currentDate]
         uint256[3] memory pubSignals;
-        pubSignals[0] = uint256(recordDataHash);  // birthdayHash
-        pubSignals[1] = 1;                         // isAdult must be 1
+        pubSignals[0] = uint256(recordDataHash); // birthdayHash
+        pubSignals[1] = 1; // isAdult must be 1
         pubSignals[2] = currentDate;
 
         return groth16Verifier.verifyProof(pA, pB, pC, pubSignals);
