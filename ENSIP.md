@@ -246,7 +246,7 @@ Record issuance proceeds as follows. Each step is mandatory unless noted otherwi
    - `key` is formatted as specified in Section 2.
    - `value` is formatted as specified in Section 3.
 
-10. **Contract stores the issued record.** The contract stores a mapping from `(node, issuer, keccak256(recordType))` to the resolver address and content key, enabling future revocation.
+10. **Contract stores the issued record.** The contract stores a mapping from `(node, issuer, keccak256(recordType))` to the resolver address and content key, enabling future revocation. If a record already exists for this triple, the new content key and resolver overwrite the previous values. Re-issuance is a last-write-wins operation that does not require prior revocation.
 
 11. **Contract emits an event.**
     ```solidity
