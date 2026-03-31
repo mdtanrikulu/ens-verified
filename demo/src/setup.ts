@@ -282,14 +282,14 @@ export async function runSetup(
 
   const { proof: zkProofData, publicSignals } = await snarkjs.groth16.fullProve(
     { birthday: ZK_BIRTHDAY, currentDate: currentDateUnix },
-    "/age_verification.wasm",
-    "/age_verification_final.zkey",
+    `${import.meta.env.BASE_URL}age_verification.wasm`,
+    `${import.meta.env.BASE_URL}age_verification_final.zkey`,
   );
 
   const birthdayHash = BigInt(publicSignals[0]);
 
   // Verify locally before proceeding
-  const vkeyResp = await fetch("/age_verification_vkey.json");
+  const vkeyResp = await fetch(`${import.meta.env.BASE_URL}age_verification_vkey.json`);
   const vkey = await vkeyResp.json();
   const localValid = await snarkjs.groth16.verify(vkey, publicSignals, zkProofData);
   if (!localValid) throw new Error("ZK proof failed local verification");
