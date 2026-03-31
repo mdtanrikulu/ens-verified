@@ -32,7 +32,7 @@ jobs:
 
       - name: Build SDK
         working-directory: sdk
-        run: yarn install --frozen-lockfile && yarn build
+        run: yarn install && yarn build
 
       - name: Install demo deps
         working-directory: demo
