@@ -1,0 +1,11 @@
+{
+  "name": "ensverify-circuits",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "circomlib": "^2.0.0"
+  },
+  "devDependencies": {
+    "snarkjs": "^0.7.0"
+  }
+}
