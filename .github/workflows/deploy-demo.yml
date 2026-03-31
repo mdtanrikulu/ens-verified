@@ -24,6 +24,9 @@ jobs:
         with:
           node-version: 20
 
+      - name: Enable corepack
+        run: corepack enable
+
       - name: Install foundry
         uses: foundry-rs/foundry-toolchain@v1
 
@@ -36,7 +39,7 @@ jobs:
 
       - name: Install demo deps
         working-directory: demo
-        run: yarn install --frozen-lockfile
+        run: yarn install
 
       - name: Build demo
         working-directory: demo
