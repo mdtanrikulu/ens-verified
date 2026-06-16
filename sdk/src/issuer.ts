@@ -7,9 +7,18 @@ import type {
   Chain,
   Transport,
 } from "viem";
-import { getAddress } from "viem";
+import { getAddress, encodeAbiParameters, keccak256 } from "viem";
 import type { RecordRequest } from "./types.js";
 import { VerifiableRecordControllerABI } from "./abi.js";
+import { assertValidRecordType } from "./utils.js";
+
+/**
+ * Anything that can produce an EIP-191 `personal_sign` over a raw digest — a viem
+ * `WalletClient` (with a bound account) or a viem `Account` (e.g. `privateKeyToAccount`).
+ */
+export type Eip191Signer = {
+  signMessage: (args: { message: { raw: Hex } }) => Promise<Hex>;
+};
 
 /** Parameters for creating a RecordRequest */
 export interface CreateRecordRequestParams {
@@ -30,6 +39,7 @@ export interface CreateRecordRequestParams {
 export function createRecordRequest(
   params: CreateRecordRequestParams
 ): RecordRequest {
+  assertValidRecordType(params.recordType);
   return {
     node: params.node,
     ensName: params.ensName,
@@ -122,17 +132,59 @@ export async function issueRecord(
 }
 
 /**
- * Signs arbitrary proof data with the wallet.
- * Used by issuers to create proof signatures for proof bundles.
+ * Low-level EIP-191 `personal_sign` over a caller-computed digest. NO domain binding.
+ *
+ * This is a thin primitive, NOT a ready-made proof. For the reference `ECDSAProofVerifier`,
+ * use `signECDSAProof`, which builds the domain-bound digest (recordDataHash, issuer, chainId,
+ * verifier contract) the verifier expects. A custom verifier must sign its own domain-bound
+ * preimage; this helper just signs whatever digest you pass.
  */
-export async function signProof(
+export async function signRawDigest(
   walletClient: WalletClient<Transport, Chain, Account>,
-  data: Hex
+  digest: Hex
 ): Promise<Hex> {
-  const signature = await walletClient.signMessage({
-    message: { raw: data },
+  return walletClient.signMessage({
+    message: { raw: digest },
   });
-  return signature;
+}
+
+/**
+ * Signs a proof for the reference `ECDSAProofVerifier`. Binds the signed preimage
+ * to (recordDataHash, issuer, chainId, verifierContract) so the resulting proof
+ * cannot be reused by a different verifier, on a different chain, or as a generic
+ * `personal_sign` of the issuer's key.
+ *
+ * The on-chain verifier computes the identical digest and validates `personal_sign`
+ * recovery against the declared issuer address.
+ */
+export async function signECDSAProof(
+  signer: Eip191Signer,
+  params: {
+    recordDataHash: Hex;
+    issuer: Address;
+    chainId: bigint | number;
+    verifierContract: Address;
+  }
+): Promise<Hex> {
+  const digest = keccak256(
+    encodeAbiParameters(
+      [
+        { type: "bytes32" },
+        { type: "address" },
+        { type: "uint256" },
+        { type: "address" },
+      ],
+      [
+        params.recordDataHash,
+        params.issuer,
+        BigInt(params.chainId),
+        params.verifierContract,
+      ]
+    )
+  );
+  return signer.signMessage({
+    message: { raw: digest },
+  });
 }
 
 /**

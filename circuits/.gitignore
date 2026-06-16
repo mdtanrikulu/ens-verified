@@ -4,3 +4,5 @@ build/*.r1cs
 build/*.sym
 build/*.zkey
 build/*_js/
+build/*.sol
+build/*vkey*.json

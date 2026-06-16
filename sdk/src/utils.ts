@@ -141,10 +141,27 @@ export function validateProofBundle(bundle: ProofBundle): {
 }
 
 /**
+ * Validates a recordType against the on-chain rule (spec Section 2): it MUST match
+ * `^[a-z0-9_]+$` — non-empty, lowercase ASCII letters, digits, and underscore only.
+ * Mirrors `VerifiableRecordController._validateRecordType` so the SDK fails fast rather
+ * than building a key the contract would reject (or that wouldn't match on lookup).
+ */
+const RECORD_TYPE_RE = /^[a-z0-9_]+$/;
+
+export function assertValidRecordType(recordType: string): void {
+  if (!RECORD_TYPE_RE.test(recordType)) {
+    throw new Error(
+      `Invalid recordType "${recordType}": must match ^[a-z0-9_]+$ (lowercase letters, digits, underscore)`
+    );
+  }
+}
+
+/**
  * Builds the text record key in the format: `vr:{issuer}:{recordType}`
  * The issuer address is lowercased (matching Solidity's `toHexString` output).
  */
 export function buildRecordKey(issuer: Address, recordType: string): string {
+  assertValidRecordType(recordType);
   // Solidity Strings.toHexString produces lowercase hex with 0x prefix
   const checksummed = getAddress(issuer);
   const lowercaseHex = checksummed.toLowerCase();

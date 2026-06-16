@@ -15,7 +15,14 @@ template AgeVerification() {
     signal input birthday;        // private: unix timestamp of birth
     signal input currentDate;     // public: current unix timestamp
 
-    signal output birthdayHash;   // Poseidon(birthday) — non-reversible commitment
+    // WARNING: birthdayHash = Poseidon(birthday) is NOT confidential. A birthday is
+    // low-entropy (~15 bits day-granularity over a century), so anyone holding the public
+    // birthdayHash recovers the exact date of birth by brute force in seconds (see
+    // circuits/bruteforce_poc.mjs). For any private/disclosure use this MUST be salted —
+    // Poseidon(birthday, salt) with `salt` a >=128-bit PRIVATE input. See
+    // ENSIP-PRIVACY.md "ZK Commitment Blinding". See age_verification_salted.circom for the
+    // blinded variant (requires recompilation + a fresh trusted setup before use).
+    signal output birthdayHash;   // Poseidon(birthday) — DEMO ONLY, brute-forceable, see warning above
     signal output isAdult;        // 1 if age >= 18 years, 0 otherwise
 
     // 18 years in seconds (365.25 days/year accounts for leap years)

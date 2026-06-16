@@ -295,4 +295,98 @@ contract VerifiableRecordControllerTest is Test {
         vm.expectRevert(VerifiableRecordController.RecordNotFound.selector);
         controller.revokeRecord(node, recordType);
     }
+
+    // ── recordType validation (spec Section 2) ──────────────────────────
+
+    function test_Revert_issueRecord_recordTypeWithColon() public {
+        IVerifiableRecordController.RecordRequest memory request = _buildRequest();
+        request.recordType = "foo:bar";
+        bytes memory userSig = _signRequest(request, userPrivateKey);
+
+        vm.prank(issuer);
+        vm.expectRevert(VerifiableRecordController.InvalidRecordType.selector);
+        controller.issueRecord(request, userSig);
+    }
+
+    function test_Revert_issueRecord_recordTypeEmpty() public {
+        IVerifiableRecordController.RecordRequest memory request = _buildRequest();
+        request.recordType = "";
+        bytes memory userSig = _signRequest(request, userPrivateKey);
+
+        vm.prank(issuer);
+        vm.expectRevert(VerifiableRecordController.InvalidRecordType.selector);
+        controller.issueRecord(request, userSig);
+    }
+
+    function test_Revert_issueRecord_recordTypeUppercase() public {
+        IVerifiableRecordController.RecordRequest memory request = _buildRequest();
+        request.recordType = "Identity";
+        bytes memory userSig = _signRequest(request, userPrivateKey);
+
+        vm.prank(issuer);
+        vm.expectRevert(VerifiableRecordController.InvalidRecordType.selector);
+        controller.issueRecord(request, userSig);
+    }
+
+    function test_Revert_issueRecord_recordTypeWhitespace() public {
+        IVerifiableRecordController.RecordRequest memory request = _buildRequest();
+        request.recordType = "age 18";
+        bytes memory userSig = _signRequest(request, userPrivateKey);
+
+        vm.prank(issuer);
+        vm.expectRevert(VerifiableRecordController.InvalidRecordType.selector);
+        controller.issueRecord(request, userSig);
+    }
+
+    function test_issueRecord_recordTypeWithUnderscoreAndDigits() public {
+        IVerifiableRecordController.RecordRequest memory request = _buildRequest();
+        request.recordType = "age_over_18";
+        bytes memory userSig = _signRequest(request, userPrivateKey);
+
+        vm.prank(issuer);
+        bytes32 contentKey = controller.issueRecord(request, userSig);
+        assertTrue(contentKey != bytes32(0));
+    }
+
+    function test_Revert_revokeRecord_recordTypeWithColon() public {
+        vm.prank(issuer);
+        vm.expectRevert(VerifiableRecordController.InvalidRecordType.selector);
+        controller.revokeRecord(node, "foo:bar");
+    }
+
+    // ── Record-level expiration (spec Section 6 step 7) ────────────────
+
+    function test_Revert_issueRecord_recordAlreadyExpired() public {
+        IVerifiableRecordController.RecordRequest memory request = _buildRequest();
+        // expires in the past relative to current block timestamp
+        vm.warp(defaultExpiry - 1 days);
+        request.expires = uint64(block.timestamp - 1);
+        bytes memory userSig = _signRequest(request, userPrivateKey);
+
+        vm.prank(issuer);
+        vm.expectRevert(VerifiableRecordController.Expired.selector);
+        controller.issueRecord(request, userSig);
+    }
+
+    // ── Re-issuance is last-write-wins (spec Section 6 step 10) ────────
+
+    function test_reissueRecord_overwritesPrevious() public {
+        _issueDefault();
+
+        // Second issuance by same issuer for same (node, recordType) with
+        // a different recordDataHash overwrites without requiring revocation.
+        IVerifiableRecordController.RecordRequest memory request2 = _buildRequest();
+        request2.recordDataHash = keccak256("new-payload");
+        bytes memory userSig2 = _signRequest(request2, userPrivateKey);
+        bytes32 expected2 = controller.computeContentKey(request2, userSig2);
+
+        vm.prank(issuer);
+        bytes32 returned2 = controller.issueRecord(request2, userSig2);
+        assertEq(returned2, expected2);
+
+        string memory key = string.concat("vr:", issuer.toHexString(), ":", recordType);
+        string memory expectedValue =
+            string.concat(uint256(expected2).toHexString(32), " ", uint256(defaultExpiry).toString());
+        assertEq(resolverAlice.text(node, key), expectedValue);
+    }
 }
