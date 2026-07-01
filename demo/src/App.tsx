@@ -21,6 +21,7 @@ import {
   type ParsedRecordValue,
 } from "@ensverify/sdk";
 import { runSetup, type DemoConfig, type IssuerConfig } from "./setup";
+import { PrivacyTab } from "./PrivacyTab";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ type AppPhase =
 
 export default function App() {
   const [phase, setPhase] = useState<AppPhase>({ phase: "input" });
+  const [tab, setTab] = useState<"records" | "privacy">("records");
   const clientRef = useRef<any>(null);
 
   async function handleStart() {
@@ -181,25 +183,46 @@ export default function App() {
     <div className="container">
       <h1>ENS Verifiable Records | Demo</h1>
 
-      {/* ENS Name Info */}
-      <div className="section">
-        <h2>ENS Name Info</h2>
-        <table>
-          <tbody>
-            <Row label="Name" value={config.ensName} />
-            <Row label="Node" value={config.node} mono />
-            <Row label="Owner" value={data.owner} mono />
-            <Row label="Resolver" value={config.resolverAddress} mono />
-          </tbody>
-        </table>
+      <div className="tab-bar">
+        <button
+          className={`tab ${tab === "records" ? "active" : ""}`}
+          onClick={() => setTab("records")}
+        >
+          Verifiable Records
+        </button>
+        <button
+          className={`tab ${tab === "privacy" ? "active" : ""}`}
+          onClick={() => setTab("privacy")}
+        >
+          Selective Disclosure
+        </button>
       </div>
 
-      {/* Records Grid */}
-      <div className="records-grid">
-        {data.records.map((rec) => (
-          <RecordCard key={rec.issuerConfig.address} rec={rec} />
-        ))}
-      </div>
+      {tab === "records" ? (
+        <>
+          {/* ENS Name Info */}
+          <div className="section">
+            <h2>ENS Name Info</h2>
+            <table>
+              <tbody>
+                <Row label="Name" value={config.ensName} />
+                <Row label="Node" value={config.node} mono />
+                <Row label="Owner" value={data.owner} mono />
+                <Row label="Resolver" value={config.resolverAddress} mono />
+              </tbody>
+            </table>
+          </div>
+
+          {/* Records Grid */}
+          <div className="records-grid">
+            {data.records.map((rec) => (
+              <RecordCard key={rec.issuerConfig.address} rec={rec} />
+            ))}
+          </div>
+        </>
+      ) : (
+        <PrivacyTab client={clientRef.current} config={config} owner={data.owner} />
+      )}
     </div>
   );
 }

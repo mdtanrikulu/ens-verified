@@ -212,6 +212,13 @@ td.check-fail {
   color: var(--fail);
 }
 
+.verdict.warn {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid var(--zk);
+  color: var(--zk);
+  font-weight: 500;
+}
+
 .signer-info {
   margin-top: 0.4rem;
   font-size: 0.8rem;
@@ -441,4 +448,138 @@ code {
   font-size: 0.78rem;
   color: var(--text-muted);
   line-height: 1.5;
+}
+
+/* Tabs */
+
+.tab-bar {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Selective disclosure */
+
+.phase-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 720px) {
+  .phase-strip {
+    grid-template-columns: 1fr;
+  }
+}
+
+.phase-chip {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+}
+
+.phase-num {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--mono-font);
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.phase-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.phase-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.disclosure-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.disclosure-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pv-btn {
+  align-self: flex-start;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.pv-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.pv-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pv-btn.danger {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: var(--fail);
+}
+
+.pv-btn.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+}
+
+.pv-detail {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  word-break: break-word;
 }
