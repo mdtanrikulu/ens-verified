@@ -229,11 +229,104 @@ contract IssuerRegistryTest is Test {
         assertEq(info.expires, newExpiry);
     }
 
+    // ── updateSpecificationURI / updateVerifierContract ─────────────────
+
+    function test_updateSpecificationURI() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "ipfs://old");
+
+        vm.expectEmit(true, false, false, true);
+        emit IIssuerRegistry.SpecificationURIUpdated(issuer, "https://issuer.example/bundles/{node}/{recordType}.json");
+        registry.updateSpecificationURI(issuer, "https://issuer.example/bundles/{node}/{recordType}.json");
+
+        IIssuerRegistry.IssuerInfo memory info = registry.getIssuer(issuer);
+        assertEq(info.specificationURI, "https://issuer.example/bundles/{node}/{recordType}.json");
+    }
+
+    function test_Revert_updateSpecificationURI_withoutRole() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "ipfs://old");
+        vm.prank(nonAdmin);
+        vm.expectRevert(IssuerRegistry.Unauthorized.selector);
+        registry.updateSpecificationURI(issuer, "ipfs://new");
+    }
+
+    function test_Revert_updateSpecificationURI_notRegistered() public {
+        vm.expectRevert(IssuerRegistry.NotRegistered.selector);
+        registry.updateSpecificationURI(issuer, "ipfs://new");
+    }
+
+    function test_updateSpecificationURI_specUpdaterRoleSuffices() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "ipfs://old");
+        registry.grantRoles(nonAdmin, registry.ROLE_SPEC_UPDATER());
+
+        vm.prank(nonAdmin);
+        registry.updateSpecificationURI(issuer, "ipfs://new");
+        assertEq(registry.getIssuer(issuer).specificationURI, "ipfs://new");
+    }
+
+    function test_updateVerifierContract() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
+        ECDSAProofVerifier newVerifier = new ECDSAProofVerifier();
+
+        vm.expectEmit(true, false, false, true);
+        emit IIssuerRegistry.VerifierContractUpdated(issuer, address(newVerifier));
+        registry.updateVerifierContract(issuer, address(newVerifier));
+
+        assertEq(registry.getIssuer(issuer).verifierContract, address(newVerifier));
+    }
+
+    function test_Revert_updateVerifierContract_zeroAddress() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
+        vm.expectRevert(IssuerRegistry.ZeroAddress.selector);
+        registry.updateVerifierContract(issuer, address(0));
+    }
+
+    function test_Revert_updateVerifierContract_notRegistered() public {
+        vm.expectRevert(IssuerRegistry.NotRegistered.selector);
+        registry.updateVerifierContract(issuer, address(verifier));
+    }
+
+    function test_Revert_updateVerifierContract_specUpdaterRoleInsufficient() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
+        registry.grantRoles(nonAdmin, registry.ROLE_SPEC_UPDATER());
+
+        address verifierAddr = address(verifier);
+        vm.prank(nonAdmin);
+        vm.expectRevert(IssuerRegistry.Unauthorized.selector);
+        registry.updateVerifierContract(issuer, verifierAddr);
+    }
+
     // ── Role management ─────────────────────────────────────────────────
 
     function test_grantRoles() public {
+        vm.expectEmit(true, false, false, true);
+        emit IIssuerRegistry.RolesGranted(nonAdmin, registry.ROLE_ISSUER_ADMIN());
         registry.grantRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN());
         assertTrue(registry.hasRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN()));
+    }
+
+    function test_Revert_grantRoles_undefinedBits() public {
+        vm.expectRevert(IssuerRegistry.InvalidRoles.selector);
+        registry.grantRoles(nonAdmin, 1 << 3);
+    }
+
+    function test_Revert_revokeRoles_undefinedBits() public {
+        vm.expectRevert(IssuerRegistry.InvalidRoles.selector);
+        registry.revokeRoles(nonAdmin, 1 << 200);
+    }
+
+    function test_revokeRoles_emitsEvent() public {
+        registry.grantRoles(nonAdmin, registry.ROLE_SPEC_UPDATER());
+        vm.expectEmit(true, false, false, true);
+        emit IIssuerRegistry.RolesRevoked(nonAdmin, registry.ROLE_SPEC_UPDATER());
+        registry.revokeRoles(nonAdmin, registry.ROLE_SPEC_UPDATER());
+    }
+
+    function test_grantRoles_alreadyHeld_noEvent() public {
+        registry.grantRoles(nonAdmin, registry.ROLE_SPEC_UPDATER());
+        // second grant of the same bit is a no-op: no event, count unchanged
+        vm.recordLogs();
+        registry.grantRoles(nonAdmin, registry.ROLE_SPEC_UPDATER());
+        assertEq(vm.getRecordedLogs().length, 0);
     }
 
     function test_Revert_grantRoles_byNonAdmin() public {

@@ -16,6 +16,18 @@ interface IIssuerRegistry {
     /// @notice Emitted when an issuer's expiration is extended
     event IssuerRenewed(address indexed issuer, uint64 newExpiry);
 
+    /// @notice Emitted when an issuer's specificationURI is replaced
+    event SpecificationURIUpdated(address indexed issuer, string newURI);
+
+    /// @notice Emitted when an issuer's verifier contract is replaced
+    event VerifierContractUpdated(address indexed issuer, address newVerifier);
+
+    /// @notice Emitted when role bits are granted to an account (mask = bits actually granted)
+    event RolesGranted(address indexed account, uint256 roles);
+
+    /// @notice Emitted when role bits are revoked from an account (mask = bits actually revoked)
+    event RolesRevoked(address indexed account, uint256 roles);
+
     /// @notice Issuer record
     struct IssuerInfo {
         string name;
@@ -40,6 +52,12 @@ interface IIssuerRegistry {
     function pauseIssuer(address issuer) external;
     function unpauseIssuer(address issuer) external;
     function renewIssuer(address issuer, uint64 newExpiry) external;
+
+    /// @notice Replace an issuer's specificationURI (bundle hosting migration; ROLE_SPEC_UPDATER)
+    function updateSpecificationURI(address issuer, string calldata newURI) external;
+
+    /// @notice Replace an issuer's verifier contract (proof scheme migration; ROLE_ISSUER_ADMIN)
+    function updateVerifierContract(address issuer, address newVerifier) external;
 
     /// @notice Allows a registered issuer to toggle their own active status (emergency kill switch)
     function setSelfActive(bool active) external;
