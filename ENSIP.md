@@ -11,7 +11,7 @@
 
 ## Abstract
 
-This ENSIP defines a protocol by which third-party **issuers** can write cryptographically verifiable attestation records to ENS names using standard text records (EIP-634). Each record contains an on-chain **content key** — a `bytes32` keccak256 binding commitment that ties the record to a specific ENS name, resolver, issuer, and user signature, preventing copy attacks across names. A DAO-governed **Issuer Registry** controls which addresses may issue records and hosts the URI from which verifiers fetch the off-chain **proof bundle**. Users authorize record creation by signing an EIP-712 typed data message, and verifiers independently validate records by recomputing the content key and checking the proof bundle.
+This ENSIP defines a protocol by which third-party **issuers** can write cryptographically verifiable attestation records to ENS names using standard text records (EIP-634). Each record contains an on-chain **content key** — a `bytes32` keccak256 binding commitment that ties the record to a specific ENS name, resolver, issuer, and user signature, preventing copy attacks across names. An **Issuer Registry** (which may be DAO-governed or community-managed) controls which addresses may issue records and hosts the URI from which verifiers fetch the off-chain **proof bundle**. Users authorize record creation by signing an EIP-712 typed data message, and verifiers independently validate records by recomputing the content key and checking the proof bundle.
 
 ## Motivation
 
@@ -46,7 +46,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 | **Verifier** | Any party that reads a verifiable record from ENS and validates it against the on-chain content key and off-chain proof bundle. |
 | **Content Key** | A `bytes32` value derived via `keccak256` that cryptographically binds a record to a specific user signature, ENS name, resolver, record data, and issuer. Stored on-chain as the first field of the text record value. |
 | **Proof Bundle** | A document containing the full inputs needed to recompute the content key and verify the issuer's proof. Typically a JSON document stored off-chain at the issuer's `specificationURI`, but MAY also be served on-chain via an `IProofBundleProvider` contract when `specificationURI` is a contract address. |
-| **Record Type** | A human-readable string identifier (e.g., `"identity"`, `"kyc"`, `"credential"`) that categorizes the verifiable record. |
+| **Record Type** | A normalized, lowercase string identifier (e.g., `"identity"`, `"kyc"`, `"credential"`) that categorizes the verifiable record. |
 | **Record Data Hash** | A `bytes32` keccak256 digest of the record payload. The actual payload lives in the proof bundle; only its hash appears on-chain. |
 | **Node** | The ENS namehash of the name, as defined in EIP-137. |
 
@@ -62,7 +62,7 @@ Where:
 
 - `vr:` is the literal prefix identifying a verifiable record.
 - `{issuerAddress}` is the issuer's Ethereum address rendered as a lowercase, `0x`-prefixed, 42-character hex string. Implementations MUST use lowercase hex (not EIP-55 checksummed), as produced by OpenZeppelin's `Strings.toHexString(address)`.
-- `{recordType}` is a non-empty string identifier. It MUST NOT contain the colon character (`:`).
+- `{recordType}` is a non-empty string identifier matching the regex `^[a-z0-9_]+$` (lowercase alphanumeric and underscores). It MUST NOT contain the colon character (`:`), uppercase letters, or whitespace. Controllers MUST reject `issueRecord` and `revokeRecord` calls with empty, uppercase, or colon-containing `recordType`.
 
 **Example:**
 
@@ -83,12 +83,12 @@ Where:
 - **`{contentKey}`**: A 66-character hex string (`0x` followed by 64 lowercase hex digits) representing the `bytes32` content key. This is the keccak256 binding commitment.
 - **`{expires}`**: A decimal integer string representing a Unix timestamp (seconds since epoch). The value `"0"` means the record has no expiration.
 
-**Delimiter:** Fields are separated by a single ASCII space character (`0x20`).
+**Grammar (strict):** the value is exactly `{contentKey}{SP}{expires}` where `{SP}` is a single ASCII space character (`0x20`). The value MUST NOT contain leading or trailing whitespace, additional spaces, or any character after the decimal `expires`. An empty-string text record value MUST be treated as "no record" (including after revocation, which sets the text record to the empty string).
 
 **Parsing algorithm:**
 
 1. Split the value on the first space to extract `contentKey`.
-2. The remainder is `expires`.
+2. The remainder is `expires`. Verifiers MUST reject values whose `expires` tail is not composed solely of ASCII decimal digits (i.e., match the regex `^[0-9]+$`).
 
 The proof bundle URI is NOT stored in the text record. Verifiers obtain it from the issuer's `specificationURI` field in the IssuerRegistry (see Section 10).
 
@@ -114,8 +114,8 @@ contentKey = keccak256(abi.encodePacked(
 
 Where:
 
-- `userSignature` is the raw bytes of the user's EIP-712 signature.
-- `keccak256(ensName)` is the keccak256 hash of the UTF-8 encoded ENS name string (e.g., `"alice.eth"`).
+- `userSignature` is the raw bytes of the user's EIP-712 signature. Implementations MUST accept only 65-byte canonical ECDSA signatures (`r || s || v`) with low-`s` form (see Section 13 — Signature Malleability).
+- `keccak256(ensName)` is the keccak256 hash of the UTF-8 encoded ENS name string (e.g., `"alice.eth"`). This is **not** the ENS namehash; it is the hash of the raw string bytes.
 - `resolver` is the resolver contract address (20 bytes, tightly packed per `abi.encodePacked`).
 - `recordDataHash` is the `bytes32` hash of the record payload.
 - `issuer` is the issuer address (20 bytes, tightly packed per `abi.encodePacked`).
@@ -311,9 +311,7 @@ A verifier MUST perform the following steps to validate a verifiable record. All
 
 ### 8. Proof Bundle JSON Schema
 
-The proof bundle is a JSON document hosted at the issuer's `specificationURI` (registered in the IssuerRegistry). It MUST contain sufficient information for a verifier to recompute the content key and verify the issuer's proof.
-
-The following schema is RECOMMENDED:
+The proof bundle is a JSON document hosted at the issuer's `specificationURI` (registered in the IssuerRegistry). Bundles MUST include every field marked REQUIRED in the table below; the schema is canonical, not merely suggestive. Issuers MAY include additional fields, and verifiers MUST ignore unrecognized fields, but verifiers MUST reject a bundle missing any REQUIRED field and MUST reject a bundle whose `version` is not a value this specification defines (currently only `"1"`).
 
 ```json
 {
@@ -325,14 +323,16 @@ The following schema is RECOMMENDED:
     "recordType": "<string>",
     "recordDataHash": "0x<bytes32 hex>",
     "issuer": "0x<address hex>",
-    "expires": <uint64>,
-    "nonce": <uint256>
+    "expires": "<uint64 as decimal string>",
+    "nonce": "<uint256 as decimal string>"
   },
   "userSignature": "0x<hex-encoded signature>",
   "contentKey": "0x<bytes32 hex>",
   "proof": "0x<hex-encoded issuer proof>"
 }
 ```
+
+`expires` and `nonce` are encoded as JSON strings containing their decimal representations. `uint256` exceeds JSON's safe integer range (2^53); encoding as a string avoids silent precision loss in common JSON parsers. Verifiers MAY accept the numeric form when they can prove no precision loss occurs (e.g., when a bundle is known to originate from a language with arbitrary-precision integers), but issuers MUST emit the string form for interoperability.
 
 Field descriptions:
 
@@ -364,7 +364,7 @@ interface IProofBundleProvider {
 }
 ```
 
-The returned `bytes` value is ABI-encoded with the following parameters (in order):
+The returned `bytes` value is `abi.encode(...)` of the following parameters in this exact order (as a flat tuple, not a struct). Each parameter is encoded per standard Solidity ABI rules — dynamic types use offset pointers, fixed-size types are padded to 32 bytes:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -380,9 +380,11 @@ The returned `bytes` value is ABI-encoded with the following parameters (in orde
 | `contentKey` | `bytes32` | The derived content key |
 | `proof` | `bytes` | The issuer's proof |
 
+The ABI schema intentionally omits `version` — the on-chain provider path is tied to this ENSIP revision. Future breaking schema revisions MUST either extend the ABI tuple (in a way that decodes without errors for current verifiers) or define a new interface identifier.
+
 This supports **CCIP-Read (EIP-3668)**: the provider contract MAY revert with `OffchainLookup` to redirect retrieval to an off-chain gateway. This enables use cases such as L2 storage proofs, where the proof bundle is stored on an L2 chain and fetched via a CCIP-Read gateway without requiring the verifier to interact directly with the L2.
 
-Verifiers MUST detect the format of `specificationURI` (contract address vs. URI) and use the appropriate retrieval mechanism. A value matching the regex `^0x[0-9a-fA-F]{40}$` MUST be treated as a contract address.
+Verifiers MUST detect the format of `specificationURI` (contract address vs. URI) and use the appropriate retrieval mechanism. A value matching the case-insensitive regex `^0x[0-9a-fA-F]{40}$` MUST be treated as a contract address; all other values MUST be treated as URIs. Verifiers MUST accept both lowercase and EIP-55 checksummed contract-address forms.
 
 ### 9. Record Type Taxonomy
 
@@ -403,7 +405,7 @@ The `supportedRecordTypes` bitmap is informational metadata — it is NOT enforc
 
 ### 10. Issuer Registry
 
-The Issuer Registry is a DAO-governed contract that maintains a whitelist of authorized issuers. It provides the following capabilities:
+The Issuer Registry is a contract that maintains a whitelist of authorized issuers. The `VerifiableRecordController` is registry-agnostic; while a single DAO-governed registry may be deployed, the controller can be configured to trust any contract implementing the `IIssuerRegistry` interface. This allows different communities (e.g., DeFi, Gaming, Compliance) to spin up their own decentralized whitelists without requiring permission from a central authority. It provides the following capabilities:
 
 #### Issuer Record
 
@@ -474,9 +476,9 @@ The deployer receives all three roles at construction time.
 | `revokeIssuer(address, string reason)` | `ROLE_ISSUER_ADMIN` | Permanently remove an issuer. Deletes the `IssuerInfo` and emits `IssuerRevoked` with the reason. |
 | `pauseIssuer(address)` | `ROLE_ISSUER_PAUSER` | Temporarily deactivate an issuer. Sets `active = false`. The issuer can be unpaused later. |
 | `unpauseIssuer(address)` | `ROLE_ISSUER_PAUSER` | Reactivate a paused issuer. Sets `active = true`. |
-| `renewIssuer(address, uint64 newExpiry)` | `ROLE_ISSUER_ADMIN` | Extend an issuer's expiration. The new expiry MUST be in the future. |
+| `renewIssuer(address, uint64 newExpiry)` | `ROLE_ISSUER_ADMIN` | Extend an issuer's expiration. The new expiry MUST be in the future. MUST emit `IssuerRenewed(address indexed issuer, uint64 newExpiry)`. |
 | `grantRoles(address, uint256 roles)` | `ROLE_ISSUER_ADMIN` | Grant role bits to an account. |
-| `revokeRoles(address, uint256 roles)` | `ROLE_ISSUER_ADMIN` | Revoke role bits from an account. |
+| `revokeRoles(address, uint256 roles)` | `ROLE_ISSUER_ADMIN` | Revoke role bits from an account. MUST revert if the call would remove the last remaining holder of `ROLE_ISSUER_ADMIN` (otherwise the registry becomes permanently unmaintainable). |
 | `setSelfActive(bool active)` | None (caller must be issuer) | Allows a registered issuer to toggle their own `active` flag. No DAO role required — intended as an emergency kill switch so an issuer can self-deactivate without waiting for DAO intervention. |
 
 #### View Functions
@@ -498,6 +500,8 @@ resolver.setApprovalForAll(controllerAddress, true);
 ```
 
 This grants the controller permission to write records on the user's behalf for all names managed by that resolver. This is a one-time operation per resolver.
+
+**Security Warning: Resolver Approval Blast Radius.** On the standard ENS PublicResolver, `setApprovalForAll` grants the controller contract permission to overwrite any text record, content hash, or address record on that name. If the `VerifiableRecordController` contract has a vulnerability, an attacker could redirect the user's website or steal funds. **Recommendation:** Implementations SHOULD provide a reference "Scoped Operator" wrapper contract. Users approve this wrapper instead of the controller directly. The wrapper only forwards `setText` calls to the controller if the key strictly starts with the `vr:` prefix, neutralizing the blast radius.
 
 Implementations MAY support alternative authorization mechanisms (e.g., per-name approval) if the resolver supports them. The controller itself does not enforce any particular authorization model -- it delegates entirely to the resolver's access control.
 
@@ -547,13 +551,43 @@ The Issuer Registry provides multiple mechanisms to disable a compromised or mis
 - **Revocation**: Permanently removes the issuer. The `IssuerRevoked` event includes a reason string for audit purposes.
 - **Expiration**: Issuers have a built-in expiration timestamp. Expired issuers are treated as inactive.
 
-#### Off-Chain Data Availability
+#### Off-Chain Data Availability & Link Rot
 
-Proof bundles are stored off-chain at the issuer's `specificationURI` (registered in the IssuerRegistry). If the proof bundle becomes unavailable, the record cannot be independently verified (though the on-chain content key still exists). Issuers SHOULD use durable storage for proof bundles to mitigate availability risks.
+Proof bundles are stored off-chain at the issuer's `specificationURI`. If the proof bundle becomes unavailable, the record cannot be independently verified (though the on-chain content key still exists), resulting in a "Schrödinger's Attestation" — dead weight on the blockchain. To prevent link rot, availability requirements scale with record lifetime:
+
+- For short-lived records (hours to weeks), standard HTTPS hosting is acceptable.
+- For medium-lived records (months), content-addressed storage (IPFS, Arweave) is RECOMMENDED.
+- For long-lived records (years or open-ended), issuers MUST register an `IProofBundleProvider` contract or use strictly content-addressed URIs (`ipfs://`, `ar://`); standard HTTPS MUST NOT be used. CCIP-Read (Section 12) allows such providers to serve bundles from L2 without bloating L1 state.
+
+Issuers MUST publish at least one `specificationURI` that remains resolvable for the full lifetime of any record they issue. Issuers that cannot commit to this SHOULD set a conservative `expires` on every record, so that availability loss after expiration has no practical consequence.
+
+#### Re-Issuance Semantics
+
+Section 6, step 10, specifies that re-issuance is a last-write-wins operation: a new valid `RecordRequest` for an existing `(node, issuer, recordType)` triple overwrites the previous content key without requiring prior revocation. Re-issuance still requires a fresh user signature over an advanced nonce, so it cannot be performed unilaterally by the issuer — renewed user consent is always required.
+
+Verifiers observing multiple historical `VerifiableRecordSet` events for the same triple MUST treat only the latest as authoritative. Indexers that retain history MUST NOT present stale content keys as currently-valid records.
+
+#### Low-Entropy Payloads
+
+The on-chain `contentKey` and the publicly-served `userSignature` are both deterministic functions of `recordDataHash`. Either value can be used as an offline oracle for brute-force recovery of the underlying record data when the payload is drawn from a small or enumerable space — email addresses, phone numbers, legal names, or similar personal identifiers typically have 20–40 bits of effective entropy, exhaustible in seconds to hours on commodity hardware.
+
+Issuers whose records carry such payloads SHOULD adopt the Selective Disclosure extension (ENSIP-TBD Privacy) rather than this base specification. The extension introduces a mandatory per-record salt and a redacted proof bundle so that neither the on-chain content key nor the public signature forms an exploitable oracle. Deployments that intentionally publish low-entropy facts (e.g., public username attestations) are not subject to this recommendation.
+
+Records whose `recordDataHash` is taken over a genuinely high-entropy preimage (a random attestation ID, a content hash, or a salted/blinded commitment) are not affected by this concern. A commitment is high-entropy only if its **preimage** is. A hash or ZK commitment computed directly over a low-entropy value — for example `Poseidon(birthday)` or `keccak256(email)` — remains fully brute-forceable: the attacker enumerates candidate inputs and recomputes the commitment, exactly as for an unhashed payload. Such commitments (including ZK proof commitments) MUST incorporate a high-entropy per-record salt of at least 128 bits into the preimage to qualify as high-entropy — see ENSIP-TBD Privacy, "ZK Commitment Blinding". Do not assume "it's a hash/ZK commitment" implies "it's safe."
 
 #### Signature Malleability
 
 Implementations MUST reject malleable signatures (i.e., enforce the low-`s` canonical form per EIP-2). The user's signature is an input to the content key derivation — accepting both `s`-value variants would allow an attacker to derive a different content key from the same logical signature.
+
+#### Verifier Domain Binding
+
+`IProofVerifier` implementations MUST bind their signed payload to a domain that includes at minimum the `issuer` address and the chain/verifier identifying information (`block.chainid` and `address(this)`). A verifier whose signed preimage is just `recordDataHash` (or any value the issuer's key might plausibly sign in another context, such as a bare `personal_sign` over arbitrary bytes) is cross-context replayable: a signature the issuer produced for an unrelated protocol could be accepted as a proof here.
+
+The reference `ECDSAProofVerifier` in this repository signs `keccak256(abi.encode(recordDataHash, issuer, block.chainid, address(this)))` wrapped in the EIP-191 personal_sign prefix. Custom verifiers SHOULD follow the same pattern or use EIP-712 with a distinct domain separator.
+
+#### Gas Costs of Mass Revocation
+
+Revoking a record requires the issuer to pay gas to clear the storage slot (setting it to an empty string). If an issuer needs to revoke thousands of compromised records, the gas cost could be prohibitive. Issuers SHOULD maintain an ETH reserve for emergency revocations. Future iterations of this standard may explore Merkle-root-based mass revocation to mitigate this.
 
 #### Trust Model
 
@@ -588,6 +622,7 @@ A dedicated registry contract (rather than, say, an allowlist inside the control
 - **Governance separation**: The DAO can manage issuer lifecycle independently of controller upgrades.
 - **Shared state**: Multiple controllers or future versions can reference the same registry.
 - **Rich metadata**: Issuers carry structured metadata (verifier contract, specification URI, supported types) that would be awkward to embed in the controller.
+- **Decentralization**: Because the controller is registry-agnostic, multiple competing or niche registries can exist simultaneously.
 
 ### Why Nonces per Signer (Not per Name)?
 
@@ -604,7 +639,7 @@ This specification is fully backwards compatible with existing ENS infrastructur
 - **Existing records**: Verifiable records use the `vr:` prefix to namespace them within text record keys.
 - **Clients**: ENS clients that do not understand verifiable records will simply see them as opaque text records. This is by design -- verifiable records degrade gracefully to standard text records.
 
-The only prerequisite is that the user's resolver must authorize the `VerifiableRecordController` as a writer (see Section 11).
+The only prerequisite is that the user's resolver must authorize the `VerifiableRecordController` (or a Scoped Operator wrapper) as a writer (see Section 11).
 
 ---
 
@@ -616,7 +651,7 @@ The reference implementation consists of the following contracts in this reposit
 |----------|------|-------------|
 | `VerifiableRecordController` | `src/VerifiableRecordController.sol` | Core controller: EIP-712 signature verification, content key derivation, resolver writes, and revocation. |
 | `IVerifiableRecordController` | `src/interfaces/IVerifiableRecordController.sol` | Interface definition with events, struct, and function signatures. |
-| `IssuerRegistry` | `src/IssuerRegistry.sol` | DAO-governed issuer whitelist with role-based access control. |
+| `IssuerRegistry` | `src/IssuerRegistry.sol` | Example DAO-governed issuer whitelist with role-based access control. |
 | `IIssuerRegistry` | `src/interfaces/IIssuerRegistry.sol` | Interface definition for the issuer registry. |
 | `IProofVerifier` | `src/interfaces/IProofVerifier.sol` | Standard interface for on-chain proof verification. |
 | `IProofBundleProvider` | `src/interfaces/IProofBundleProvider.sol` | Interface for on-chain proof bundle retrieval (supports CCIP-Read for L2 storage proofs). |
@@ -629,3 +664,5 @@ The test suite at `test/VerifiableRecordController_t.sol` demonstrates the compl
 ## Copyright
 
 Copyright and related rights waived via [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
+
+**Note for Implementers (CC0 1.0 Universal):** The authors have dedicated this work to the public domain by waiving all rights worldwide under copyright law, including related and neighboring rights. You may copy, modify, distribute, and perform the work, even for commercial purposes, without asking permission. Patent and trademark rights are unaffected, as are publicity or privacy rights. The authors make no warranties about the work and disclaim liability for all uses. When using or citing this ENSIP, you should not imply endorsement by the original authors or the ENS DAO.

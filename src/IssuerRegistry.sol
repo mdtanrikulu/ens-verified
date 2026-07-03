@@ -17,12 +17,24 @@ contract IssuerRegistry is IIssuerRegistry {
     mapping(address => IssuerInfo) private _issuers;
     mapping(address => bool) private _registered;
 
+    /// @notice DAO-enforced pause flag, settable ONLY via pauseIssuer/unpauseIssuer
+    ///         (ROLE_ISSUER_PAUSER). Kept distinct from IssuerInfo.active (the issuer's
+    ///         own self-deactivation switch) so that a paused issuer cannot undo a DAO
+    ///         pause via setSelfActive. isActiveIssuer requires BOTH !_daoPaused and active.
+    mapping(address => bool) private _daoPaused;
+
+    /// @notice Count of accounts holding each role bit. Used to prevent removing
+    ///         the last ROLE_ISSUER_ADMIN, which would render the registry unmaintainable.
+    mapping(uint256 => uint256) private _roleHolderCount;
+
     // ── Errors ──────────────────────────────────────────────────────────
     error Unauthorized();
     error AlreadyRegistered();
     error NotRegistered();
     error ZeroAddress();
     error InvalidExpiry();
+    error LastAdminProtected();
+    error DaoPaused();
 
     // ── Modifiers ───────────────────────────────────────────────────────
     modifier onlyRole(uint256 role) {
@@ -33,15 +45,45 @@ contract IssuerRegistry is IIssuerRegistry {
     // ── Constructor ─────────────────────────────────────────────────────
     constructor() {
         _roles[msg.sender] = ROLE_ISSUER_ADMIN | ROLE_ISSUER_PAUSER | ROLE_SPEC_UPDATER;
+        _roleHolderCount[ROLE_ISSUER_ADMIN] = 1;
+        _roleHolderCount[ROLE_ISSUER_PAUSER] = 1;
+        _roleHolderCount[ROLE_SPEC_UPDATER] = 1;
     }
 
     // ── Role management ─────────────────────────────────────────────────
     function grantRoles(address account, uint256 roles) external onlyRole(ROLE_ISSUER_ADMIN) {
-        _roles[account] |= roles;
+        uint256 current = _roles[account];
+        uint256 newlyGranted = roles & ~current;
+        if (newlyGranted != 0) {
+            _roles[account] = current | newlyGranted;
+            _incrementRoleCounts(newlyGranted);
+        }
     }
 
     function revokeRoles(address account, uint256 roles) external onlyRole(ROLE_ISSUER_ADMIN) {
-        _roles[account] &= ~roles;
+        uint256 current = _roles[account];
+        uint256 actuallyRevoked = roles & current;
+        if (actuallyRevoked == 0) return;
+
+        // Prevent removing the last ROLE_ISSUER_ADMIN.
+        if ((actuallyRevoked & ROLE_ISSUER_ADMIN) != 0 && _roleHolderCount[ROLE_ISSUER_ADMIN] <= 1) {
+            revert LastAdminProtected();
+        }
+
+        _roles[account] = current & ~actuallyRevoked;
+        _decrementRoleCounts(actuallyRevoked);
+    }
+
+    function _incrementRoleCounts(uint256 rolesMask) internal {
+        if (rolesMask & ROLE_ISSUER_ADMIN != 0) _roleHolderCount[ROLE_ISSUER_ADMIN]++;
+        if (rolesMask & ROLE_ISSUER_PAUSER != 0) _roleHolderCount[ROLE_ISSUER_PAUSER]++;
+        if (rolesMask & ROLE_SPEC_UPDATER != 0) _roleHolderCount[ROLE_SPEC_UPDATER]++;
+    }
+
+    function _decrementRoleCounts(uint256 rolesMask) internal {
+        if (rolesMask & ROLE_ISSUER_ADMIN != 0) _roleHolderCount[ROLE_ISSUER_ADMIN]--;
+        if (rolesMask & ROLE_ISSUER_PAUSER != 0) _roleHolderCount[ROLE_ISSUER_PAUSER]--;
+        if (rolesMask & ROLE_SPEC_UPDATER != 0) _roleHolderCount[ROLE_SPEC_UPDATER]--;
     }
 
     function hasRoles(address account, uint256 roles) external view returns (bool) {
@@ -88,6 +130,7 @@ contract IssuerRegistry is IIssuerRegistry {
     function pauseIssuer(address issuer) external onlyRole(ROLE_ISSUER_PAUSER) {
         if (!_registered[issuer]) revert NotRegistered();
 
+        _daoPaused[issuer] = true;
         _issuers[issuer].active = false;
 
         emit IssuerStatusChanged(issuer, false);
@@ -96,6 +139,7 @@ contract IssuerRegistry is IIssuerRegistry {
     function unpauseIssuer(address issuer) external onlyRole(ROLE_ISSUER_PAUSER) {
         if (!_registered[issuer]) revert NotRegistered();
 
+        _daoPaused[issuer] = false;
         _issuers[issuer].active = true;
 
         emit IssuerStatusChanged(issuer, true);
@@ -106,12 +150,18 @@ contract IssuerRegistry is IIssuerRegistry {
         if (newExpiry <= block.timestamp) revert InvalidExpiry();
 
         _issuers[issuer].expires = newExpiry;
+
+        emit IssuerRenewed(issuer, newExpiry);
     }
 
     /// @notice Allows a registered issuer to toggle their own active status.
     ///         No DAO role required — the issuer controls this for emergency self-deactivation.
+    /// @dev    A self-reactivation (active == true) is rejected while the issuer is under a
+    ///         DAO pause: the emergency pause can only be lifted by ROLE_ISSUER_PAUSER via
+    ///         unpauseIssuer. Self-deactivation (active == false) is always permitted.
     function setSelfActive(bool active) external {
         if (!_registered[msg.sender]) revert NotRegistered();
+        if (active && _daoPaused[msg.sender]) revert DaoPaused();
 
         _issuers[msg.sender].active = active;
 
@@ -125,6 +175,13 @@ contract IssuerRegistry is IIssuerRegistry {
     }
 
     function isActiveIssuer(address issuer) external view returns (bool) {
-        return _registered[issuer] && _issuers[issuer].active && _issuers[issuer].expires > block.timestamp;
+        return _registered[issuer] && !_daoPaused[issuer] && _issuers[issuer].active
+            && _issuers[issuer].expires > block.timestamp;
+    }
+
+    /// @notice Whether an issuer is currently under a DAO-enforced pause.
+    ///         Distinct from the issuer's self-managed active flag in getIssuer().
+    function isDaoPaused(address issuer) external view returns (bool) {
+        return _daoPaused[issuer];
     }
 }

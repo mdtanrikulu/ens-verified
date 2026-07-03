@@ -173,6 +173,50 @@ contract IssuerRegistryTest is Test {
         registry.setSelfActive(false);
     }
 
+    // ── DAO pause cannot be undone by the issuer (regression for pause-bypass) ──
+
+    function test_Revert_setSelfActive_cannotClearDaoPause() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
+
+        // DAO pauser pauses the (malicious) issuer.
+        vm.prank(pauser);
+        registry.pauseIssuer(issuer);
+        assertFalse(registry.isActiveIssuer(issuer));
+        assertTrue(registry.isDaoPaused(issuer));
+
+        // The issuer attempting to self-reactivate MUST revert — the DAO pause holds.
+        vm.prank(issuer);
+        vm.expectRevert(IssuerRegistry.DaoPaused.selector);
+        registry.setSelfActive(true);
+
+        assertFalse(registry.isActiveIssuer(issuer));
+    }
+
+    function test_setSelfActive_deactivateAllowedWhileDaoPaused() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
+
+        vm.prank(pauser);
+        registry.pauseIssuer(issuer);
+
+        // Self-deactivation is always allowed (it never re-enables the issuer).
+        vm.prank(issuer);
+        registry.setSelfActive(false);
+        assertFalse(registry.isActiveIssuer(issuer));
+    }
+
+    function test_unpauseIssuer_restoresAfterAttemptedBypass() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
+
+        vm.prank(pauser);
+        registry.pauseIssuer(issuer);
+
+        // Only the DAO pauser can lift the pause.
+        vm.prank(pauser);
+        registry.unpauseIssuer(issuer);
+        assertFalse(registry.isDaoPaused(issuer));
+        assertTrue(registry.isActiveIssuer(issuer));
+    }
+
     // ── Renewal ─────────────────────────────────────────────────────────
 
     function test_renewIssuer() public {
@@ -200,10 +244,59 @@ contract IssuerRegistryTest is Test {
     }
 
     function test_revokeRoles() public {
+        // Grant admin to a second account first so we can revoke from the
+        // deployer without tripping the last-admin safeguard.
         registry.grantRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN());
         assertTrue(registry.hasRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN()));
 
         registry.revokeRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN());
         assertFalse(registry.hasRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN()));
+    }
+
+    // ── renewIssuer negative path + event ───────────────────────────────
+
+    function test_Revert_renewIssuer_pastExpiry() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
+        vm.expectRevert(IssuerRegistry.InvalidExpiry.selector);
+        registry.renewIssuer(issuer, uint64(block.timestamp));
+    }
+
+    function test_renewIssuer_emitsEvent() public {
+        registry.registerIssuer(issuer, "Test Issuer", 1, defaultExpiry, address(verifier), "");
+        uint64 newExpiry = defaultExpiry + 365 days;
+
+        vm.expectEmit(true, false, false, true);
+        emit IIssuerRegistry.IssuerRenewed(issuer, newExpiry);
+        registry.renewIssuer(issuer, newExpiry);
+    }
+
+    // ── Last-admin safeguard ────────────────────────────────────────────
+
+    function test_Revert_revokeRoles_lastAdmin_onSelf() public {
+        // Deployer is the only admin. Attempting to revoke their own admin MUST revert.
+        uint256 adminRole = registry.ROLE_ISSUER_ADMIN();
+        vm.expectRevert(IssuerRegistry.LastAdminProtected.selector);
+        registry.revokeRoles(address(this), adminRole);
+    }
+
+    function test_revokeRoles_lastAdmin_allowedAfterGrantingSecond() public {
+        // Grant admin to nonAdmin, then the deployer can safely drop their own admin.
+        registry.grantRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN());
+        registry.revokeRoles(address(this), registry.ROLE_ISSUER_ADMIN());
+        assertFalse(registry.hasRoles(address(this), registry.ROLE_ISSUER_ADMIN()));
+        assertTrue(registry.hasRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN()));
+    }
+
+    function test_Revert_revokeRoles_lastAdmin_onOther() public {
+        // If we grant admin to someone and then try to revoke it from them while
+        // the deployer also holds admin, it's fine (there are two admins).
+        registry.grantRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN());
+        registry.revokeRoles(nonAdmin, registry.ROLE_ISSUER_ADMIN());
+
+        // Now only the deployer is admin. Attempting to revoke their admin via
+        // the deployer themselves MUST revert.
+        uint256 adminRole = registry.ROLE_ISSUER_ADMIN();
+        vm.expectRevert(IssuerRegistry.LastAdminProtected.selector);
+        registry.revokeRoles(address(this), adminRole);
     }
 }

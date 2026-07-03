@@ -22,23 +22,25 @@ export {
   createRecordRequest,
   getEIP712TypedData,
   issueRecord,
-  signProof,
+  signRawDigest,
+  signECDSAProof,
   revokeRecord,
 } from "./issuer.js";
-export type { CreateRecordRequestParams } from "./issuer.js";
+export type { CreateRecordRequestParams, Eip191Signer } from "./issuer.js";
 
 // Verifier functions
 export {
   resolveRecord,
   parseRecordValue,
   fetchProofBundle,
+  parseProofBundle,
   verifyContentKey,
   recoverRecordSigner,
   getIssuerInfo,
   getNodeOwner,
   verifyRecord,
 } from "./verifier.js";
-export type { VerifyRecordParams } from "./verifier.js";
+export type { VerifyRecordParams, FetchProofBundleOptions } from "./verifier.js";
 
 // Utility functions
 export {
@@ -47,4 +49,5 @@ export {
   createProofBundle,
   validateProofBundle,
   buildRecordKey,
+  assertValidRecordType,
 } from "./utils.js";

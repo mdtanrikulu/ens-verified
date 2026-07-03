@@ -13,6 +13,9 @@ interface IIssuerRegistry {
     /// @notice Emitted when an issuer's status is paused/unpaused
     event IssuerStatusChanged(address indexed issuer, bool active);
 
+    /// @notice Emitted when an issuer's expiration is extended
+    event IssuerRenewed(address indexed issuer, uint64 newExpiry);
+
     /// @notice Issuer record
     struct IssuerInfo {
         string name;
@@ -43,4 +46,8 @@ interface IIssuerRegistry {
 
     function getIssuer(address issuer) external view returns (IssuerInfo memory);
     function isActiveIssuer(address issuer) external view returns (bool);
+
+    /// @notice Whether an issuer is under a DAO-enforced pause (settable only by ROLE_ISSUER_PAUSER).
+    ///         A paused issuer cannot self-reactivate via setSelfActive.
+    function isDaoPaused(address issuer) external view returns (bool);
 }

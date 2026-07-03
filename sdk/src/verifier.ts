@@ -12,6 +12,7 @@ import {
   computeContentKey,
   parseRecordValue as parseRecordValueUtil,
   buildRecordKey,
+  validateProofBundle,
 } from "./utils.js";
 import { getEIP712TypedData } from "./issuer.js";
 
@@ -95,30 +96,131 @@ export function parseRecordValue(value: string): ParsedRecordValue {
   return parseRecordValueUtil(value);
 }
 
+/** IPFS/Arweave HTTPS gateways used to resolve content-addressed proof-bundle URIs. */
+const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
+const AR_GATEWAY = "https://arweave.net/";
+const FETCH_TIMEOUT_MS = 10_000;
+const MAX_BUNDLE_BYTES = 1_000_000; // 1 MB hard cap on the bundle body
+const UINT64_MAX = (1n << 64n) - 1n;
+const UINT256_MAX = (1n << 256n) - 1n;
+
 /**
- * Fetches and parses a ProofBundle from the issuer's specificationURI.
- * Supports https:// and any other URI scheme handled by the global fetch().
+ * Translates content-addressed URIs to an HTTPS gateway. `ipfs://{cid}/{path}` and
+ * `ar://{id}` are the durability schemes the spec recommends/requires for long-lived
+ * records but that the global `fetch` cannot resolve directly. Other schemes pass through.
  */
-export async function fetchProofBundle(
-  specificationURI: string
-): Promise<ProofBundle> {
-  const response = await fetch(specificationURI);
-  if (!response.ok) {
+function normalizeFetchUri(uri: string, ipfsGateway: string, arGateway: string): string {
+  if (uri.startsWith("ipfs://")) {
+    return ipfsGateway + uri.slice("ipfs://".length).replace(/^ipfs\//, "");
+  }
+  if (uri.startsWith("ar://")) {
+    return arGateway + uri.slice("ar://".length);
+  }
+  return uri;
+}
+
+/**
+ * Rejects schemes/hosts that are unsafe for a (possibly server-side) verifier. Browser-local
+ * `blob:`/`data:` URIs are allowed (no network egress); `http:`/`file:` and `https:` URLs
+ * pointing at loopback, link-local, or private hosts are rejected to blunt SSRF. Server-side
+ * callers SHOULD still egress-filter, since a permitted host can redirect to an internal one.
+ */
+function assertSafeFetchUrl(uri: string): void {
+  let u: URL;
+  try {
+    u = new URL(uri);
+  } catch {
+    throw new Error(`Invalid proof bundle URI: "${uri}"`);
+  }
+  const scheme = u.protocol.toLowerCase();
+  if (scheme === "blob:" || scheme === "data:") return; // browser-local, no egress
+  if (scheme !== "https:") {
     throw new Error(
-      `Failed to fetch proof bundle from ${specificationURI}: ${response.status} ${response.statusText}`
+      `Unsupported proof bundle scheme "${scheme}" — use https://, ipfs://, or ar://`
+    );
+  }
+  const host = u.hostname.toLowerCase();
+  const internal =
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "0.0.0.0" ||
+    host === "[::1]" ||
+    host === "::1" ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    /^\[?(fc|fd)[0-9a-f]{2}:/.test(host) ||
+    /^\[?fe80:/.test(host);
+  if (internal) {
+    throw new Error(`Refusing to fetch proof bundle from internal host "${host}"`);
+  }
+}
+
+/** Reads a fetch `Response` body with a hard byte cap, then JSON-parses it. */
+async function readBoundedJson(response: Response, maxBytes: number): Promise<any> {
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const text = await response.text();
+    if (text.length > maxBytes) throw new Error("Proof bundle exceeds size limit");
+    return JSON.parse(text);
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.length;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error("Proof bundle exceeds size limit");
+      }
+      chunks.push(value);
+    }
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.length;
+  }
+  return JSON.parse(new TextDecoder().decode(merged));
+}
+
+/** Parses a non-negative decimal value (string or integer number) to a bounded bigint. */
+function asDecimalBigInt(v: unknown, field: string, max: bigint): bigint {
+  if (typeof v === "number" && Number.isInteger(v) && v >= 0) v = String(v);
+  if (typeof v !== "string" || !/^\d+$/.test(v)) {
+    throw new Error(`Invalid proof bundle: ${field} must be a non-negative decimal value`);
+  }
+  const n = BigInt(v);
+  if (n > max) throw new Error(`Invalid proof bundle: ${field} out of range`);
+  return n;
+}
+
+/**
+ * Parses + validates a proof bundle from already-fetched JSON. NO network — this is the
+ * security-critical part the library owns. Bring your own transport (your own HTTP client,
+ * IPFS node, gateway, cache, on-chain provider, …), then hand the parsed JSON here.
+ *
+ * Per ENSIP Section 8: `version` MUST be "1" with request, userSignature, contentKey, and proof
+ * present; `expires`/`nonce` are validated as strict decimal values (rejecting "0x10", "1e3",
+ * null, …) rather than silently coerced. Throws on any malformed bundle.
+ */
+export function parseProofBundle(data: any): ProofBundle {
+  if (data?.version !== "1") {
+    throw new Error(
+      `Invalid proof bundle: unsupported version "${data?.version}" (expected "1")`
+    );
+  }
+  if (!data.request || !data.userSignature || !data.contentKey || !data.proof) {
+    throw new Error(
+      "Invalid proof bundle: missing required fields (request, userSignature, contentKey, proof)"
     );
   }
 
-  const data = await response.json();
-
-  // Validate that the fetched data has the expected shape
-  if (!data.request || !data.userSignature || !data.contentKey) {
-    throw new Error(
-      "Invalid proof bundle: missing required fields (request, userSignature, contentKey)"
-    );
-  }
-
-  // Reconstruct with proper bigint types from JSON (which serializes as strings/numbers)
   const bundle: ProofBundle = {
     request: {
       node: data.request.node as Hex,
@@ -127,15 +229,69 @@ export async function fetchProofBundle(
       recordType: data.request.recordType as string,
       recordDataHash: data.request.recordDataHash as Hex,
       issuer: data.request.issuer as Address,
-      expires: BigInt(data.request.expires),
-      nonce: BigInt(data.request.nonce),
+      expires: asDecimalBigInt(data.request.expires, "expires", UINT64_MAX),
+      nonce: asDecimalBigInt(data.request.nonce, "nonce", UINT256_MAX),
     },
     userSignature: data.userSignature as Hex,
     contentKey: data.contentKey as Hex,
-    proof: (data.proof ?? data.attestation ?? "0x") as Hex,
+    proof: data.proof as Hex,
   };
 
+  const structural = validateProofBundle(bundle);
+  if (!structural.valid) {
+    throw new Error(`Invalid proof bundle: ${structural.errors.join("; ")}`);
+  }
+
   return bundle;
+}
+
+/** Options for the built-in {@link fetchProofBundle} convenience transport. */
+export interface FetchProofBundleOptions {
+  /** Replace the network call entirely (e.g. an authenticated client, or a test stub). Defaults to global `fetch`. */
+  fetchImpl?: typeof fetch;
+  /** HTTPS gateway used to resolve `ipfs://` URIs. Defaults to `https://ipfs.io/ipfs/`. */
+  ipfsGateway?: string;
+  /** HTTPS gateway used to resolve `ar://` URIs. Defaults to `https://arweave.net/`. */
+  arGateway?: string;
+}
+
+/**
+ * Built-in CONVENIENCE transport: fetch a bundle from `specificationURI` and {@link parseProofBundle} it.
+ * Resolves `https://`, `ipfs://`/`ar://` (via configurable gateways), and browser-local `blob:`/`data:`,
+ * with a 10s timeout, a 1 MB body cap, and an SSRF scheme/host allowlist.
+ *
+ * This is entirely optional. If you don't want the SDK touching the network — or want a different
+ * gateway, IPFS client, or caching — fetch the bundle yourself and call {@link parseProofBundle},
+ * or pass your own resolver via `verifyRecord`'s `fetchBundle` option.
+ */
+export async function fetchProofBundle(
+  specificationURI: string,
+  options: FetchProofBundleOptions = {}
+): Promise<ProofBundle> {
+  const url = normalizeFetchUri(
+    specificationURI,
+    options.ipfsGateway ?? IPFS_GATEWAY,
+    options.arGateway ?? AR_GATEWAY
+  );
+  assertSafeFetchUrl(url);
+
+  const doFetch = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let data: any;
+  try {
+    const response = await doFetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch proof bundle from ${specificationURI}: ${response.status} ${response.statusText}`
+      );
+    }
+    data = await readBoundedJson(response, MAX_BUNDLE_BYTES);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  return parseProofBundle(data);
 }
 
 /**
@@ -229,6 +385,17 @@ export interface VerifyRecordParams {
   node: Hex;
   issuer: Address;
   recordType: string;
+  /**
+   * Optional: take full control of proof-bundle retrieval. When provided, the SDK does NOT
+   * fetch — you resolve `specificationURI` however you like (your own HTTP/IPFS client, a
+   * gateway you trust, a cache, an on-chain provider) and return a parsed `ProofBundle`
+   * (run your fetched JSON through `parseProofBundle`). The `ctx` gives you the record
+   * coordinates so you can do per-record retrieval. If omitted, the built-in transport is used.
+   */
+  fetchBundle?: (
+    specificationURI: string,
+    ctx: { node: Hex; recordType: string; issuer: Address }
+  ) => Promise<ProofBundle>;
 }
 
 /**
@@ -302,10 +469,21 @@ export async function verifyRecord(
     }
   }
 
-  // Step 4: Fetch the proof bundle
+  // Step 4: Obtain the proof bundle. If the caller injected `fetchBundle`, they own retrieval
+  // entirely (no SDK network/gateway). Otherwise use the built-in on-chain or HTTP transport.
   let bundle: ProofBundle;
   try {
-    if (isContractAddress(issuerInfo.specificationURI)) {
+    if (params.fetchBundle) {
+      bundle = await params.fetchBundle(issuerInfo.specificationURI, {
+        node: params.node,
+        recordType: params.recordType,
+        issuer: params.issuer,
+      });
+      const structural = validateProofBundle(bundle);
+      if (!structural.valid) {
+        return result;
+      }
+    } else if (isContractAddress(issuerInfo.specificationURI)) {
       // On-chain proof bundle provider (e.g., CCIP-Read for L2 storage proofs)
       const rawBundle = await client.readContract({
         address: issuerInfo.specificationURI as Address,
@@ -314,19 +492,30 @@ export async function verifyRecord(
         args: [params.node, params.recordType],
       });
       bundle = decodeProofBundle(rawBundle as Hex);
+      const structural = validateProofBundle(bundle);
+      if (!structural.valid) {
+        return result;
+      }
     } else {
+      // fetchProofBundle already runs validateProofBundle and throws on failure.
       bundle = await fetchProofBundle(issuerInfo.specificationURI);
     }
   } catch {
     return result;
   }
 
-  // Step 5: Verify contentKey matches
+  // Step 5: Verify contentKey matches. If this fails, the bundle does not correspond
+  // to the on-chain record — short-circuit rather than consult the issuer's
+  // verifierContract with data that is already known not to match.
   result.contentKeyMatch = verifyContentKey(
     bundle.request,
     bundle.userSignature,
     parsed.contentKey
   );
+
+  if (!result.contentKeyMatch) {
+    return result;
+  }
 
   // Proof verification: call the issuer's verifierContract on-chain.
   try {
@@ -338,6 +527,10 @@ export async function verifyRecord(
     });
   } catch {
     result.proofValid = false;
+  }
+
+  if (!result.proofValid) {
+    return result;
   }
 
   // Step 6: Recover the signer and verify they are the current name owner

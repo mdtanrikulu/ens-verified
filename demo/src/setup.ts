@@ -28,6 +28,7 @@ import {
   getEIP712TypedData,
   computeContentKey,
   createProofBundle,
+  signECDSAProof,
 } from "@ensverify/sdk";
 
 import {
@@ -118,6 +119,7 @@ function labelhash(label: string): Hex {
 
 function serializeBundle(bundle: any): string {
   return JSON.stringify({
+    version: "1",
     request: {
       ...bundle.request,
       expires: bundle.request.expires.toString(),
@@ -271,8 +273,13 @@ export async function runSetup(
   });
 
   const ecdsaContentKey = computeContentKey(ecdsaRequest, ecdsaUserSig);
-  const ecdsaProof = await ecdsaIssuerAccount.signMessage({
-    message: { raw: ecdsaRecordDataHash },
+  // Domain-bound proof for the reference ECDSAProofVerifier. The digest construction
+  // (recordDataHash, issuer, chainId, verifier contract) lives once in the SDK helper.
+  const ecdsaProof = await signECDSAProof(ecdsaIssuerAccount, {
+    recordDataHash: ecdsaRecordDataHash,
+    issuer: ecdsaIssuerAccount.address,
+    chainId: 1,
+    verifierContract: ecdsaVerifierAddress,
   });
   const ecdsaBundle = createProofBundle(ecdsaRequest, ecdsaUserSig, ecdsaContentKey, ecdsaProof);
 
@@ -280,8 +287,18 @@ export async function runSetup(
 
   const currentDateUnix = Math.floor(Date.now() / 1000).toString();
 
+  // Per ENSIP-PRIVACY "ZK Commitment Blinding": the birthday commitment MUST be salted so the
+  // public birthdayHash (which becomes the on-chain recordDataHash) cannot be brute-forced from
+  // the low-entropy birthday. The salt is a PRIVATE circuit input — it never appears in a public
+  // signal or the public proof bundle. A real issuer generates it with a CSPRNG and delivers it to
+  // the user confidentially, to be persisted for later selective disclosure.
+  const saltBytes = crypto.getRandomValues(new Uint8Array(16)); // 128-bit
+  const zkSalt = BigInt(
+    "0x" + Array.from(saltBytes, (b) => b.toString(16).padStart(2, "0")).join(""),
+  ).toString();
+
   const { proof: zkProofData, publicSignals } = await snarkjs.groth16.fullProve(
-    { birthday: ZK_BIRTHDAY, currentDate: currentDateUnix },
+    { birthday: ZK_BIRTHDAY, salt: zkSalt, currentDate: currentDateUnix },
     `${import.meta.env.BASE_URL}age_verification.wasm`,
     `${import.meta.env.BASE_URL}age_verification_final.zkey`,
   );

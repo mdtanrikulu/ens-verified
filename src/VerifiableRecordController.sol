@@ -44,6 +44,7 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
     error InvalidNonce();
     error Expired();
     error RecordNotFound();
+    error InvalidRecordType();
 
     // ── Constructor ─────────────────────────────────────────────────────
     constructor(address _issuerRegistry) EIP712("ENS Verifiable Records", "1") {
@@ -59,6 +60,7 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
     {
         if (!issuerRegistry.isActiveIssuer(msg.sender)) revert UnauthorizedIssuer();
         if (msg.sender != request.issuer) revert IssuerMismatch();
+        _validateRecordType(request.recordType);
 
         address signer = _recoverSigner(request, userSignature);
         if (signer == address(0)) revert InvalidSignature();
@@ -83,6 +85,7 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
 
     /// @inheritdoc IVerifiableRecordController
     function revokeRecord(bytes32 node, string calldata recordType) external {
+        _validateRecordType(recordType);
         bytes32 typeHash = keccak256(bytes(recordType));
         IssuedRecord memory record = _issuedRecords[node][msg.sender][typeHash];
         if (!record.exists) revert RecordNotFound();
@@ -185,5 +188,22 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
 
     function _buildRecordKey(address issuer, string calldata recordType) internal pure returns (string memory) {
         return string.concat("vr:", issuer.toHexString(), ":", recordType);
+    }
+
+    /// @dev Enforces spec Section 2: recordType MUST match ^[a-z0-9_]+$ — non-empty, with only
+    ///      lowercase ASCII letters, digits, and underscore. This subsumes the empty and ':'
+    ///      checks and additionally rejects uppercase, whitespace, and other punctuation, so a
+    ///      record type cannot have visually-confusable or case-variant duplicates.
+    function _validateRecordType(string calldata recordType) internal pure {
+        bytes calldata b = bytes(recordType);
+        uint256 len = b.length;
+        if (len == 0) revert InvalidRecordType();
+        for (uint256 i = 0; i < len; ++i) {
+            bytes1 c = b[i];
+            bool ok = (c >= 0x61 && c <= 0x7a) // a-z
+                || (c >= 0x30 && c <= 0x39) // 0-9
+                || c == 0x5f; // _
+            if (!ok) revert InvalidRecordType();
+        }
     }
 }

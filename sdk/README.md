@@ -59,18 +59,33 @@ const txHash = await issueRecord(issuerWalletClient, CONTROLLER, request, userSi
 ### 3. Issuer creates and hosts proof bundle
 
 ```ts
-import { createProofBundle, signProof, computeContentKey } from "@ensverify/sdk";
+import { createProofBundle, signECDSAProof, computeContentKey } from "@ensverify/sdk";
 
-// Issuer signs the proof
-const proof = await signProof(issuerWalletClient, request.recordDataHash);
+// Issuer signs a domain-bound preimage for the reference ECDSAProofVerifier:
+//   keccak256(abi.encode(recordDataHash, issuer, chainId, verifierContract))
+// wrapped in EIP-191 personal_sign. The domain binding prevents this proof
+// from being reused with a different verifier or on another chain.
+const proof = await signECDSAProof(issuerWalletClient, {
+  recordDataHash: request.recordDataHash,
+  issuer: request.issuer,
+  chainId,
+  verifierContract: ECDSA_VERIFIER_ADDRESS,
+});
 
 // Build the proof bundle
 const contentKey = computeContentKey(request, userSignature);
 const bundle = createProofBundle(request, userSignature, contentKey, proof);
 
-// Host this JSON at the issuer's specificationURI (registered in IssuerRegistry)
-await uploadToStorage(JSON.stringify(bundle));
+// Host this JSON at the issuer's specificationURI (registered in IssuerRegistry).
+// The JSON MUST include `"version": "1"` and all fields required by ENSIP Section 8.
+await uploadToStorage(JSON.stringify({ version: "1", ...bundle }));
 ```
+
+> `signRawDigest` is a low-level `personal_sign` primitive (no domain binding) for callers
+> targeting a custom `IProofVerifier` with its own signed preimage — it is NOT a ready-made
+> proof. Use `signECDSAProof` for the reference verifier; it builds the domain-bound digest
+> (recordDataHash, issuer, chainId, verifier contract) for you and accepts a viem `WalletClient`
+> or `Account`.
 
 The proof bundle lives at the issuer's `specificationURI` registered in `IssuerRegistry` — either a URL (`https://`, `ipfs://`) or a contract address implementing `IProofBundleProvider` for on-chain retrieval. Verifiers get that URI from the registry — it's never stored in the text record.
 
@@ -144,7 +159,11 @@ const raw = await resolveRecord(publicClient, resolverAddress, node, issuerAddre
 const { contentKey, expires } = parseRecordValue(raw);
 
 // 4. Fetch and verify proof
+//    Built-in transport (https/ipfs/ar/blob, hardened):
 const bundle = await fetchProofBundle(proofURI);
+//    …or bring your own transport (no SDK network): you fetch, the SDK validates:
+//    const bundle = parseProofBundle(await myClient.get(proofURI));
+//    …or let verifyRecord do it via params.fetchBundle for full control.
 const keyMatch = verifyContentKey(bundle.request, bundle.userSignature, contentKey);
 
 // 5. Is the signer still the owner?
@@ -215,7 +234,8 @@ const { valid, errors } = validateProofBundle(bundle);
 | `createRecordRequest(params)` | Build a `RecordRequest` from inputs |
 | `getEIP712TypedData(request, controller, chainId)` | Get typed data for wallet signing |
 | `issueRecord(client, controller, request, sig)` | Submit issuance tx |
-| `signProof(client, recordDataHash)` | Sign proof (ECDSA) for proof bundle |
+| `signECDSAProof(signer, {recordDataHash, issuer, chainId, verifierContract})` | Sign a domain-bound proof for the reference `ECDSAProofVerifier` |
+| `signRawDigest(client, digest)` | Low-level `personal_sign` of a raw digest (custom verifiers; not a ready-made proof) |
 | `revokeRecord(client, controller, node, type)` | Revoke a record |
 
 ### Verifier Functions
@@ -226,7 +246,8 @@ const { valid, errors } = validateProofBundle(bundle);
 | `getIssuerInfo(client, registry, issuer)` | Get issuer metadata, status, and specificationURI |
 | `resolveRecord(client, resolver, node, issuer, type)` | Read text record from resolver |
 | `parseRecordValue(raw)` | Parse `"{contentKey} {expires}"` |
-| `fetchProofBundle(uri)` | Fetch + parse proof bundle JSON |
+| `parseProofBundle(json)` | Validate + parse already-fetched bundle JSON (no network — bring your own transport) |
+| `fetchProofBundle(uri, opts?)` | Built-in convenience transport: fetch + `parseProofBundle`. `opts`: `{ fetchImpl, ipfsGateway, arGateway }` |
 | `verifyContentKey(request, sig, expected)` | Recompute content key, compare |
 | `recoverRecordSigner(request, sig, controller, chainId)` | Recover EIP-712 signer address |
 | `getNodeOwner(client, ensRegistry, node)` | Get current ENS name owner |
