@@ -84,7 +84,10 @@ export const VerifiableRecordControllerABI = [
   {
     type: "function",
     name: "nonces",
-    inputs: [{ name: "", type: "address" }],
+    inputs: [
+      { name: "signer", type: "address" },
+      { name: "node", type: "bytes32" },
+    ],
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view",
   },

@@ -42,12 +42,39 @@ export {
 } from "./verifier.js";
 export type { VerifyRecordParams, FetchProofBundleOptions } from "./verifier.js";
 
+// Privacy / Selective Disclosure (ENSIP-PRIVACY)
+export {
+  saltedKeccakHash,
+  randomBytes32,
+  redactProofBundle,
+  parseRedactedProofBundle,
+  completeRedactedBundle,
+  getDisclosureTypedData,
+  recoverDisclosureSigner,
+  verifyPrivateRecordPublic,
+  verifyDisclosure,
+  PRIVATE_RECORD_SENTINEL,
+} from "./privacy.js";
+export type {
+  RedactedProofBundle,
+  Disclosure,
+  DisclosureNonceStore,
+  VerifyDisclosureParams,
+  DisclosureVerificationResult,
+  PublicPrivateRecordParams,
+  PublicPrivateRecordResult,
+} from "./privacy.js";
+
 // Utility functions
 export {
   computeContentKey,
   parseRecordValue as parseRecordValueRaw,
   createProofBundle,
+  serializeProofBundle,
   validateProofBundle,
   buildRecordKey,
   assertValidRecordType,
+  expandSpecificationURI,
+  checkCanonicalSignature,
+  assertCanonicalSignature,
 } from "./utils.js";

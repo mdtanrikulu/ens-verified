@@ -43,6 +43,8 @@ export interface VerificationResult {
   contentKeyMatch: boolean;
   proofValid: boolean;
   issuerActive: boolean;
+  /** Bundle request fields (node, ensName, recordType, issuer, resolver, expires) match the queried record */
+  bundleMatchesQuery: boolean;
   signerIsOwner: boolean;
   expired: boolean;
 }
