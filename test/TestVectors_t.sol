@@ -32,8 +32,7 @@ contract TestVectorsTest is Test {
     bytes32 constant PRIV_STRUCT_HASH = 0x72e3a36b640c799a3bfc4ff13967d5bce78d2851a621546ce36bcde50620a15f;
     bytes32 constant PRIV_DIGEST = 0x3807e11ae11125a3a896c047e5f11a78fc6d1b9affd5dc858a834c792e759049;
     bytes32 constant DISCLOSURE_NONCE = 0x3333333333333333333333333333333333333333333333333333333333333333;
-    bytes constant PRIV_SIG =
-        hex"fb64548e89c8b164f16121acacc1d23c54e637456abef4524d02ffe030b96e5366641f8f5f607162d78c9a12cf5992825c205182ce245df35c4b91e4246299b6"
+    bytes constant PRIV_SIG = hex"fb64548e89c8b164f16121acacc1d23c54e637456abef4524d02ffe030b96e5366641f8f5f607162d78c9a12cf5992825c205182ce245df35c4b91e4246299b6"
         hex"1b";
 
     function _splitSig(bytes memory sig) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
