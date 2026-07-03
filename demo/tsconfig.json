@@ -11,7 +11,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["react", "react-dom", "node"]
+    "types": ["react", "react-dom", "node", "vite/client"]
   },
   "include": ["src"]
 }

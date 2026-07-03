@@ -11,8 +11,7 @@ import { mainnet } from "@tevm/common";
 import {
   namehash,
   keccak256,
-  toHex,
-  toBytes,
+  stringToBytes,
   encodeAbiParameters,
   type Hex,
   type Address,
@@ -28,9 +27,10 @@ import {
   getEIP712TypedData,
   computeContentKey,
   createProofBundle,
+  serializeProofBundle,
   signECDSAProof,
 } from "@ensverify/sdk";
-import { saltedKeccakHash, redactBundle, type RedactedBundle } from "./privacy";
+import { saltedKeccakHash, redactProofBundle, type RedactedProofBundle } from "@ensverify/sdk";
 
 import {
   IssuerRegistry,
@@ -132,7 +132,7 @@ export interface PrivateRecordConfig {
    */
   publicModel: "redacted" | "predicate";
   predicateLabel?: string; // predicate model only, e.g. "Age ≥ 18"
-  redactedBundle?: RedactedBundle; // redacted model only (for display)
+  redactedBundle?: RedactedProofBundle; // redacted model only (for display)
   secret: DisclosureSecret;
 }
 
@@ -156,21 +156,8 @@ export type ProgressCallback = (step: number, total: number, message: string) =>
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function labelhash(label: string): Hex {
-  return keccak256(toBytes(label));
-}
-
-function serializeBundle(bundle: any): string {
-  return JSON.stringify({
-    version: "1",
-    request: {
-      ...bundle.request,
-      expires: bundle.request.expires.toString(),
-      nonce: bundle.request.nonce.toString(),
-    },
-    userSignature: bundle.userSignature,
-    contentKey: bundle.contentKey,
-    proof: bundle.proof,
-  });
+  // stringToBytes, NOT toBytes: toBytes would hex-decode a label like "0xdead" (L-8)
+  return keccak256(stringToBytes(label));
 }
 
 function blobUrl(json: string): string {
@@ -300,7 +287,7 @@ export async function runSetup(
 
   // ── ECDSA record preparation (off-chain) ──
 
-  const ecdsaRecordDataHash = keccak256(toHex(toBytes(ECDSA_CLAIM_PAYLOAD)));
+  const ecdsaRecordDataHash = keccak256(stringToBytes(ECDSA_CLAIM_PAYLOAD));
 
   // Nonces: fresh controller → user starts at 0
   const ecdsaRequest = createRecordRequest({
@@ -406,10 +393,10 @@ export async function runSetup(
 
   // Create blob URLs for proof bundles
   const ecdsaBlobUrl = URL.createObjectURL(
-    new Blob([serializeBundle(ecdsaBundle)], { type: "application/json" }),
+    new Blob([serializeProofBundle(ecdsaBundle)], { type: "application/json" }),
   );
   const zkBlobUrl = URL.createObjectURL(
-    new Blob([serializeBundle(zkBundle)], { type: "application/json" }),
+    new Blob([serializeProofBundle(zkBundle)], { type: "application/json" }),
   );
 
   // ── Private (selective-disclosure) record preparation — ENSIP-PRIVACY ─────
@@ -449,7 +436,7 @@ export async function runSetup(
     chainId: 1,
     verifierContract: ecdsaVerifierAddress,
   });
-  const emailRedacted = redactBundle(
+  const emailRedacted = redactProofBundle(
     createProofBundle(emailRequest, emailUserSig, emailContentKey, emailProof),
   );
   const emailBlobUrl = blobUrl(JSON.stringify(emailRedacted));
@@ -485,7 +472,7 @@ export async function runSetup(
     ageContentKey,
     zkProofBytes,
   );
-  const ageBlobUrl = blobUrl(serializeBundle(ageFullBundle));
+  const ageBlobUrl = blobUrl(serializeProofBundle(ageFullBundle));
 
   // ── Step 5: Register issuers (with real blob URLs) ───────────────────────
 

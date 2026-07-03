@@ -1,43 +1,23 @@
 /**
- * ENSIP-PRIVACY — Selective Disclosure primitives (browser).
+ * Demo-only privacy helpers.
  *
- * Everything the extension needs is client-side crypto plus the base on-chain
- * verification the demo already performs:
+ * The ENSIP-PRIVACY protocol primitives — salted keccak hash, redacted proof bundles,
+ * the EIP-712 Disclosure signature, vendor verification — live in `@ensverify/sdk`
+ * (see `sdk/src/privacy.ts`); this demo imports them from there like any integrator
+ * would. What remains here is what the SDK deliberately does NOT ship:
  *
- *   - salted recordDataHash   (Section 1)         → keccak256(salt‖data) or Poseidon(value, salt)
- *   - redacted proof bundle    (Section 2)         → recordDataHash omitted, version "1-private"
- *   - EIP-712 disclosure sig    (Section 5)         → binds node/issuer/type/nonce/vendor/expires
- *   - vendor verification       (Section 4, step 8) → reconstruct recordDataHash, run base §7 flow
- *
- * The brute-force helpers demonstrate the motivation: an UNSALTED low-entropy
- * commitment (keccak or Poseidon) is an offline oracle, crackable in-browser;
- * the salted commitment is not.
+ *   - Poseidon commitments (circomlibjs is a heavy wasm dependency; the SDK takes a
+ *     `computeRecordDataHash` override instead) — used for the ZK age record.
+ *   - UNSALTED hashes and in-browser brute-force loops, which exist purely to
+ *     demonstrate the attack that mandatory salting prevents.
  */
 
-import {
-  type Address,
-  type Hex,
-  encodePacked,
-  keccak256,
-  toBytes,
-  toHex,
-} from "viem";
+import { type Hex, keccak256, stringToBytes } from "viem";
 import { buildPoseidon } from "circomlibjs";
-import type { ProofBundle, RecordRequest } from "@ensverify/sdk";
+import { saltedKeccakHash } from "@ensverify/sdk";
 
-// ── Salted recordDataHash (Section 1) ────────────────────────────────────────
+// ── Poseidon over BN254 — matches the circuit's commitment. Built once and cached. ──
 
-/** keccak256(abi.encodePacked(salt, data)) — the private hash for non-ZK records (e.g. email). */
-export function saltedKeccakHash(salt: Hex, data: string): Hex {
-  return keccak256(encodePacked(["bytes32", "bytes"], [salt, toHex(toBytes(data))]));
-}
-
-/** keccak256(data) — the UNSALTED, brute-forceable oracle we contrast against. */
-export function unsaltedKeccakHash(data: string): Hex {
-  return keccak256(toHex(toBytes(data)));
-}
-
-// Poseidon over BN254 — matches the circuit's commitment. Built once and cached.
 let _poseidon: Awaited<ReturnType<typeof buildPoseidon>> | null = null;
 
 export async function getPoseidon() {
@@ -61,134 +41,9 @@ export async function unsaltedPoseidonHash(value: bigint): Promise<Hex> {
   return fieldToHex(p.F.toString(p([value])));
 }
 
-// ── Redacted proof bundle (Section 2) ────────────────────────────────────────
-
-export interface RedactedBundle {
-  version: "1-private";
-  private: true;
-  request: {
-    node: Hex;
-    ensName: string;
-    resolver: Address;
-    recordType: string;
-    recordDataHash: null;
-    issuer: Address;
-    expires: string;
-    nonce: string;
-  };
-  userSignature: Hex;
-  contentKey: Hex;
-  proof: Hex;
-}
-
-/** Produces the public, redacted bundle: recordDataHash stripped, version pinned to "1-private". */
-export function redactBundle(bundle: ProofBundle): RedactedBundle {
-  return {
-    version: "1-private",
-    private: true,
-    request: {
-      node: bundle.request.node,
-      ensName: bundle.request.ensName,
-      resolver: bundle.request.resolver,
-      recordType: bundle.request.recordType,
-      recordDataHash: null,
-      issuer: bundle.request.issuer,
-      expires: bundle.request.expires.toString(),
-      nonce: bundle.request.nonce.toString(),
-    },
-    userSignature: bundle.userSignature,
-    contentKey: bundle.contentKey,
-    proof: bundle.proof,
-  };
-}
-
-/** Applies the Section 2 rejection rules to an arbitrary fetched object. Returns null if invalid. */
-export function parseRedactedBundle(data: any): RedactedBundle | null {
-  if (data?.private !== true) return null; // not a private bundle
-  if (data.version !== "1-private") return null; // §2: private ⇒ version must be "1-private"
-  if (data.recordDataHash != null || data.request?.recordDataHash != null) return null; // §2: must be redacted
-  if (!data.request || !data.userSignature || !data.contentKey || !data.proof) return null;
-  return data as RedactedBundle;
-}
-
-/**
- * Vendor step 7: complete the redacted bundle by inserting the recordDataHash the vendor
- * reconstructed from the disclosed (salt, data). The result is a full base-spec ProofBundle
- * ready for the standard §7 verification pipeline.
- */
-export function completeBundle(
-  redacted: RedactedBundle,
-  recordDataHash: Hex
-): ProofBundle {
-  const request: RecordRequest = {
-    node: redacted.request.node,
-    ensName: redacted.request.ensName,
-    resolver: redacted.request.resolver,
-    recordType: redacted.request.recordType,
-    recordDataHash,
-    issuer: redacted.request.issuer,
-    expires: BigInt(redacted.request.expires),
-    nonce: BigInt(redacted.request.nonce),
-  };
-  return {
-    request,
-    userSignature: redacted.userSignature,
-    contentKey: redacted.contentKey,
-    proof: redacted.proof,
-  };
-}
-
-// ── Disclosure signature (Section 5, EIP-712) ────────────────────────────────
-
-export interface DisclosureParams {
-  node: Hex;
-  issuer: Address;
-  recordType: string;
-  nonce: Hex; // vendor-issued, 32 bytes
-  vendor: Address; // address(0) if the vendor does not authenticate via a wallet
-  expires: bigint; // 0 = no expiry
-}
-
-/** EIP-712 typed data for the `Disclosure` struct (Section 5). */
-export function getDisclosureTypedData(
-  params: DisclosureParams,
-  controllerAddress: Address,
-  chainId: number
-) {
-  return {
-    domain: {
-      name: "ENS Selective Disclosure",
-      version: "1",
-      chainId: BigInt(chainId),
-      verifyingContract: controllerAddress,
-    },
-    types: {
-      Disclosure: [
-        { name: "node", type: "bytes32" },
-        { name: "issuer", type: "address" },
-        { name: "recordType", type: "string" },
-        { name: "nonce", type: "bytes32" },
-        { name: "vendor", type: "address" },
-        { name: "expires", type: "uint64" },
-      ],
-    },
-    primaryType: "Disclosure" as const,
-    message: {
-      node: params.node,
-      issuer: params.issuer,
-      recordType: params.recordType,
-      nonce: params.nonce,
-      vendor: params.vendor,
-      expires: params.expires,
-    },
-  };
-}
-
-/** A cryptographically-random 32-byte vendor nonce (Section 4, step 1). */
-export function randomNonce(): Hex {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return ("0x" +
-    Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")) as Hex;
+/** keccak256(data) — the UNSALTED, brute-forceable oracle we contrast against. */
+export function unsaltedKeccakHash(data: string): Hex {
+  return keccak256(stringToBytes(data));
 }
 
 // ── Brute-force demonstration (Security Considerations) ───────────────────────

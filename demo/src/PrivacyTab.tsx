@@ -13,20 +13,24 @@ import {
   type ProofBundle,
 } from "@ensverify/sdk";
 import type { DemoConfig, PrivateRecordConfig } from "./setup";
+// Protocol primitives come from the SDK — the demo consumes them exactly like any integrator.
+import {
+  completeRedactedBundle,
+  getDisclosureTypedData,
+  parseRedactedProofBundle,
+  randomBytes32,
+  saltedKeccakHash,
+  type RedactedProofBundle,
+} from "@ensverify/sdk";
+// Demo-only helpers: Poseidon commitments and the brute-force visualizations.
 import {
   bruteForceBirthday,
   bruteForceEmail,
   buildEmailCandidates,
-  completeBundle,
-  getDisclosureTypedData,
-  parseRedactedBundle,
-  randomNonce,
-  saltedKeccakHash,
   saltedPoseidonHash,
   unsaltedKeccakHash,
   unsaltedPoseidonHash,
   type BruteForceResult,
-  type RedactedBundle,
 } from "./privacy";
 
 // ── Tab ────────────────────────────────────────────────────────────────────
@@ -149,7 +153,7 @@ function PrivacyRecordCard({
 
   function handleChallenge() {
     reset();
-    setNonce(randomNonce());
+    setNonce(randomBytes32());
   }
 
   async function handleDisclose() {
@@ -199,9 +203,9 @@ function PrivacyRecordCard({
       if (rec.publicModel === "redacted") {
         // Fetch the redacted bundle, apply §2 rules, then insert the reconstructed hash.
         const raw = await (await fetch(rec.specificationURI)).json();
-        const redacted: RedactedBundle | null = parseRedactedBundle(raw);
-        if (!redacted) throw new Error("Served bundle failed the §2 redaction rules");
-        const completed: ProofBundle = completeBundle(redacted, reconstructedHash);
+        // Throws with the specific §2 rule violated, if any.
+        const redacted: RedactedProofBundle = parseRedactedProofBundle(raw);
+        const completed: ProofBundle = completeRedactedBundle(redacted, reconstructedHash);
         verification = await verifyRecord(client, {
           ...verifyParams(config, rec),
           fetchBundle: async () => completed,
@@ -600,14 +604,14 @@ function disclosureFlow(isAge: boolean): FlowStep[] {
       actor: "Vendor",
       action: "Issue challenge (nonce)",
       detail:
-        "Vendor sends a random 128-bit+ nonce (plus optional expiry and vendor identity). Single-use.",
+        "Vendor sends a random 32-byte nonce plus its identity (address and/or display identity) and optional expiry. Single-use.",
       location: "off-chain",
     },
     {
       actor: "User",
       action: "Sign EIP-712 Disclosure",
       detail:
-        "Binds node + issuer + recordType + nonce + vendor + expires. Domain-separated from every other protocol.",
+        "Binds node + issuer + recordType + nonce + vendor + vendorIdentity + expires. Domain-separated from every other protocol.",
       location: "off-chain",
     },
     {
@@ -774,6 +778,7 @@ function disclosureTyped(config: DemoConfig, rec: PrivateRecordConfig, nonce: He
       recordType: rec.recordType,
       nonce,
       vendor: "0x0000000000000000000000000000000000000000",
+      vendorIdentity: "https://vendor.example.com",
       expires: 0n,
     },
     config.controllerAddress,
