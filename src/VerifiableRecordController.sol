@@ -207,8 +207,7 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
         if (len == 0) revert InvalidRecordType();
         for (uint256 i = 0; i < len; ++i) {
             bytes1 c = b[i];
-            bool ok =
-                (c >= 0x61 && c <= 0x7a) // a-z
+            bool ok = (c >= 0x61 && c <= 0x7a) // a-z
                 || (c >= 0x30 && c <= 0x39) // 0-9
                 || c == 0x5f; // _
             if (!ok) revert InvalidRecordType();
