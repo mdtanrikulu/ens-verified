@@ -61,8 +61,32 @@ contract VerifiableRecordControllerTest is Test {
             recordDataHash: recordDataHash,
             issuer: issuer,
             expires: defaultExpiry,
-            nonce: controller.nonces(user)
+            nonce: controller.nonces(user, node)
         });
+    }
+
+    function test_nonces_independentAcrossNodes() public {
+        // Per-(signer, node) scoping: a record for a second name signed with nonce 0
+        // succeeds even after the first name consumed its own nonce 0.
+        IVerifiableRecordController.RecordRequest memory first = _buildRequest();
+        bytes memory sigFirst = _signRequest(first, userPrivateKey);
+        vm.prank(issuer);
+        controller.issueRecord(first, sigFirst);
+        assertEq(controller.nonces(user, node), 1);
+
+        bytes32 otherNode = keccak256("other.eth-node");
+        assertEq(controller.nonces(user, otherNode), 0);
+
+        IVerifiableRecordController.RecordRequest memory second = _buildRequest();
+        second.node = otherNode;
+        second.ensName = "other.eth";
+        second.nonce = controller.nonces(user, otherNode); // still 0
+        bytes memory sigSecond = _signRequest(second, userPrivateKey);
+        vm.prank(issuer);
+        controller.issueRecord(second, sigSecond);
+
+        assertEq(controller.nonces(user, otherNode), 1);
+        assertEq(controller.nonces(user, node), 1); // untouched by the other name
     }
 
     function _signRequest(IVerifiableRecordController.RecordRequest memory request, uint256 privateKey)

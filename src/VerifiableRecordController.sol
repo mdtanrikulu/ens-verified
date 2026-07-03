@@ -27,7 +27,10 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
     IIssuerRegistry public immutable issuerRegistry;
 
     // ── Storage ─────────────────────────────────────────────────────────
-    mapping(address => uint256) public nonces;
+    /// @notice Per-(signer, node) replay nonces. Scoping per node lets one signer
+    ///         authorize records for different names concurrently (batch issuance,
+    ///         org keys managing many names) while keeping same-name replay protection.
+    mapping(address => mapping(bytes32 => uint256)) public nonces;
 
     struct IssuedRecord {
         address resolver;
@@ -63,11 +66,10 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
         _validateRecordType(request.recordType);
 
         address signer = _recoverSigner(request, userSignature);
-        if (signer == address(0)) revert InvalidSignature();
 
-        if (request.nonce != nonces[signer]) revert InvalidNonce();
+        if (request.nonce != nonces[signer][request.node]) revert InvalidNonce();
         unchecked {
-            nonces[signer]++;
+            nonces[signer][request.node]++;
         }
 
         // expires == 0 means no expiration
@@ -169,7 +171,12 @@ contract VerifiableRecordController is IVerifiableRecordController, EIP712 {
             structHash := keccak256(buf, 0x120) // 9 × 32 = 288 bytes
         }
         bytes32 digest = _hashTypedDataV4(structHash);
-        return ECDSA.recover(digest, signature);
+        // tryRecover instead of recover: surface every malformed-signature shape
+        // (bad length, high-s, bad v, zero recovery) as this contract's own
+        // InvalidSignature() error, as the spec mandates (ENSIP.md Section 6, step 6).
+        (address signer, ECDSA.RecoverError err,) = ECDSA.tryRecoverCalldata(digest, signature);
+        if (err != ECDSA.RecoverError.NoError || signer == address(0)) revert InvalidSignature();
+        return signer;
     }
 
     /// @dev Writes the verifiable record to the resolver as a text record.

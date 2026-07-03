@@ -8,6 +8,9 @@ remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
 ]
 
+# CI runs with FOUNDRY_PROFILE=ci (.github/workflows/test.yml); inherits the defaults.
+[profile.ci]
+
 [fmt]
 line_length = 120
 tab_width = 4

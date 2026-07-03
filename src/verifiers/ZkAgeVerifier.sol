@@ -17,8 +17,11 @@ interface IGroth16Verifier {
 /// @title ZkAgeVerifier
 /// @notice IProofVerifier adapter for Groth16 age-verification ZK proofs.
 ///
-///         The circuit proves that the prover knows a birthday such that:
-///         1. Poseidon(birthday) == birthdayHash  (binds to recordDataHash)
+///         The circuit (age_verification_salted.circom) proves that the prover knows a
+///         birthday and a private >=128-bit salt such that:
+///         1. Poseidon(birthday, salt) == birthdayHash  (salted commitment, binds to
+///            recordDataHash; the salt blinds the low-entropy birthday so the public
+///            hash is not a brute-force oracle — see ENSIP-PRIVACY.md, ZK Commitment Blinding)
 ///         2. currentDate - birthday >= 18 years  (age check)
 ///
 ///         Proof bytes encode: (pA, pB, pC, currentDate).

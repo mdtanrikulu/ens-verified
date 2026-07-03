@@ -11,13 +11,12 @@ import { mainnet } from "@tevm/common";
 import {
   namehash,
   keccak256,
-  toHex,
-  toBytes,
+  stringToBytes,
   encodeAbiParameters,
   type Hex,
   type Address,
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 // @ts-ignore — snarkjs has no types
 import * as snarkjs from "snarkjs";
 
@@ -28,8 +27,10 @@ import {
   getEIP712TypedData,
   computeContentKey,
   createProofBundle,
+  serializeProofBundle,
   signECDSAProof,
 } from "@ensverify/sdk";
+import { saltedKeccakHash, redactProofBundle, type RedactedProofBundle } from "@ensverify/sdk";
 
 import {
   IssuerRegistry,
@@ -51,11 +52,19 @@ const ECDSA_CLAIM_PAYLOAD = "github:ensverify";
 const ZK_RECORD_TYPE = "age";
 const ZK_BIRTHDAY = "946684800"; // Jan 1, 2000
 
+// Private (selective-disclosure) records — ENSIP-PRIVACY. These are served as REDACTED
+// bundles and demonstrated in the "Selective Disclosure" tab.
+const EMAIL_RECORD_TYPE = "email";
+const EMAIL_VALUE = "alice@example.com"; // low-entropy private data, disclosed only to a vendor
+const PRIVATE_AGE_RECORD_TYPE = "age";
+
 // Well-known test private keys (deterministic, NOT secret)
 const DAO_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
 const ECDSA_ISSUER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as Hex;
 const USER_KEY = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" as Hex;
 const ZK_ISSUER_KEY = "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6" as Hex;
+const EMAIL_ISSUER_KEY = "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a" as Hex;
+const PRIVATE_AGE_ISSUER_KEY = "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba" as Hex;
 
 const MockENSRegistryABI = [
   {
@@ -97,6 +106,36 @@ export interface IssuerConfig {
   label: string;
 }
 
+/**
+ * A private (selective-disclosure) record for the Privacy tab. `secret` is the data the
+ * user would hold in their wallet and reveal only to a vendor over a confidential channel;
+ * it never appears on-chain or in the public (redacted) bundle. We keep it client-side here
+ * purely to drive the demo's disclosure flow.
+ */
+export type DisclosureSecret =
+  | { kind: "keccak"; data: string; salt: Hex }
+  | { kind: "poseidon"; data: string; birthday: string; saltDecimal: string };
+
+export interface PrivateRecordConfig {
+  type: "email" | "age";
+  label: string;
+  recordType: string;
+  issuerAddress: Address;
+  verifierContract: Address;
+  specificationURI: string;
+  recordDataHash: Hex; // the true, salted on-chain hash (for "reconstruction matches" display)
+  /**
+   * How much the PUBLIC path reveals:
+   *  - "redacted": nothing (bundle omits recordDataHash) — email. Disclosure reveals the value.
+   *  - "predicate": a ZK-proven predicate (e.g. "age ≥ 18") is public while the value stays
+   *    hidden — age. Disclosure reveals the exact value.
+   */
+  publicModel: "redacted" | "predicate";
+  predicateLabel?: string; // predicate model only, e.g. "Age ≥ 18"
+  redactedBundle?: RedactedProofBundle; // redacted model only (for display)
+  secret: DisclosureSecret;
+}
+
 export interface DemoConfig {
   registryAddress: Address;
   controllerAddress: Address;
@@ -107,6 +146,9 @@ export interface DemoConfig {
   node: Hex;
   chainId: number;
   issuers: IssuerConfig[];
+  privateRecords: PrivateRecordConfig[];
+  /** The name owner's local account — used to sign disclosure requests in the demo. */
+  userAccount: PrivateKeyAccount;
 }
 
 export type ProgressCallback = (step: number, total: number, message: string) => void;
@@ -114,21 +156,12 @@ export type ProgressCallback = (step: number, total: number, message: string) =>
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function labelhash(label: string): Hex {
-  return keccak256(toBytes(label));
+  // stringToBytes, NOT toBytes: toBytes would hex-decode a label like "0xdead" (L-8)
+  return keccak256(stringToBytes(label));
 }
 
-function serializeBundle(bundle: any): string {
-  return JSON.stringify({
-    version: "1",
-    request: {
-      ...bundle.request,
-      expires: bundle.request.expires.toString(),
-      nonce: bundle.request.nonce.toString(),
-    },
-    userSignature: bundle.userSignature,
-    contentKey: bundle.contentKey,
-    proof: bundle.proof,
-  });
+function blobUrl(json: string): string {
+  return URL.createObjectURL(new Blob([json], { type: "application/json" }));
 }
 
 // ── Main Setup ───────────────────────────────────────────────────────────────
@@ -151,6 +184,8 @@ export async function runSetup(
   const ecdsaIssuerAccount = privateKeyToAccount(ECDSA_ISSUER_KEY);
   const userAccount = privateKeyToAccount(USER_KEY);
   const zkIssuerAccount = privateKeyToAccount(ZK_ISSUER_KEY);
+  const emailIssuerAccount = privateKeyToAccount(EMAIL_ISSUER_KEY);
+  const privateAgeIssuerAccount = privateKeyToAccount(PRIVATE_AGE_ISSUER_KEY);
 
   // Fund all accounts on the local chain
   await Promise.all([
@@ -158,6 +193,8 @@ export async function runSetup(
     client.setBalance({ address: ecdsaIssuerAccount.address, value: 10n ** 18n }),
     client.setBalance({ address: userAccount.address, value: 10n ** 18n }),
     client.setBalance({ address: zkIssuerAccount.address, value: 10n ** 18n }),
+    client.setBalance({ address: emailIssuerAccount.address, value: 10n ** 18n }),
+    client.setBalance({ address: privateAgeIssuerAccount.address, value: 10n ** 18n }),
   ]);
 
   // ── Step 2: Deploy contracts ─────────────────────────────────────────────
@@ -250,7 +287,7 @@ export async function runSetup(
 
   // ── ECDSA record preparation (off-chain) ──
 
-  const ecdsaRecordDataHash = keccak256(toHex(toBytes(ECDSA_CLAIM_PAYLOAD)));
+  const ecdsaRecordDataHash = keccak256(stringToBytes(ECDSA_CLAIM_PAYLOAD));
 
   // Nonces: fresh controller → user starts at 0
   const ecdsaRequest = createRecordRequest({
@@ -356,11 +393,86 @@ export async function runSetup(
 
   // Create blob URLs for proof bundles
   const ecdsaBlobUrl = URL.createObjectURL(
-    new Blob([serializeBundle(ecdsaBundle)], { type: "application/json" }),
+    new Blob([serializeProofBundle(ecdsaBundle)], { type: "application/json" }),
   );
   const zkBlobUrl = URL.createObjectURL(
-    new Blob([serializeBundle(zkBundle)], { type: "application/json" }),
+    new Blob([serializeProofBundle(zkBundle)], { type: "application/json" }),
   );
+
+  // ── Private (selective-disclosure) record preparation — ENSIP-PRIVACY ─────
+  // Both are salted so the public hash is not a brute-force oracle, and both are served as
+  // REDACTED bundles (recordDataHash omitted, version "1-private"). The on-chain record and
+  // contentKey are still derived from the true salted hash; only the public bundle is redacted.
+
+  onProgress(4, TOTAL_STEPS, "Preparing private records...");
+
+  // Email — salted keccak commitment: recordDataHash = keccak256(salt ‖ email).
+  const emailSaltBytes = crypto.getRandomValues(new Uint8Array(32));
+  const emailSalt = ("0x" +
+    Array.from(emailSaltBytes, (b) => b.toString(16).padStart(2, "0")).join("")) as Hex;
+  const emailRecordDataHash = saltedKeccakHash(emailSalt, EMAIL_VALUE);
+
+  const emailRequest = createRecordRequest({
+    node,
+    ensName: ENS_NAME,
+    resolver: resolverAddress,
+    recordType: EMAIL_RECORD_TYPE,
+    recordDataHash: emailRecordDataHash,
+    issuer: emailIssuerAccount.address,
+    expires: recordExpires,
+    nonce: 2n,
+  });
+  const emailTypedData = getEIP712TypedData(emailRequest, controllerAddress, 1);
+  const emailUserSig = await userAccount.signTypedData({
+    domain: emailTypedData.domain as any,
+    types: emailTypedData.types as any,
+    primaryType: emailTypedData.primaryType as any,
+    message: emailTypedData.message as any,
+  });
+  const emailContentKey = computeContentKey(emailRequest, emailUserSig);
+  const emailProof = await signECDSAProof(emailIssuerAccount, {
+    recordDataHash: emailRecordDataHash,
+    issuer: emailIssuerAccount.address,
+    chainId: 1,
+    verifierContract: ecdsaVerifierAddress,
+  });
+  const emailRedacted = redactProofBundle(
+    createProofBundle(emailRequest, emailUserSig, emailContentKey, emailProof),
+  );
+  const emailBlobUrl = blobUrl(JSON.stringify(emailRedacted));
+
+  // Private age — reuse the salted Poseidon commitment + Groth16 proof from the ZK record,
+  // under a distinct private issuer serving a REDACTED bundle. The proof only attests the
+  // public signals [birthdayHash, isAdult, currentDate], so it is issuer/nonce-independent.
+  const ageRequest = createRecordRequest({
+    node,
+    ensName: ENS_NAME,
+    resolver: resolverAddress,
+    recordType: PRIVATE_AGE_RECORD_TYPE,
+    recordDataHash: zkRecordDataHash,
+    issuer: privateAgeIssuerAccount.address,
+    expires: recordExpires,
+    nonce: 3n,
+  });
+  const ageTypedData = getEIP712TypedData(ageRequest, controllerAddress, 1);
+  const ageUserSig = await userAccount.signTypedData({
+    domain: ageTypedData.domain as any,
+    types: ageTypedData.types as any,
+    primaryType: ageTypedData.primaryType as any,
+    message: ageTypedData.message as any,
+  });
+  const ageContentKey = computeContentKey(ageRequest, ageUserSig);
+  // The salted birthdayHash is safe to publish, so the ZK age record serves a FULL bundle:
+  // the public can verify the "age ≥ 18" predicate proof while the birthday itself stays hidden
+  // (it is never in the bundle). Selective disclosure then reveals the *exact* birthday to a
+  // specific vendor. This is the key contrast with the email record, whose value is fully hidden.
+  const ageFullBundle = createProofBundle(
+    ageRequest,
+    ageUserSig,
+    ageContentKey,
+    zkProofBytes,
+  );
+  const ageBlobUrl = blobUrl(serializeProofBundle(ageFullBundle));
 
   // ── Step 5: Register issuers (with real blob URLs) ───────────────────────
 
@@ -393,6 +505,36 @@ export async function runSetup(
       issuerExpires,
       zkVerifierAddress,
       zkBlobUrl,
+    ],
+  });
+
+  await call({
+    from: daoAccount.address,
+    to: registryAddress,
+    abi: IssuerRegistryABI,
+    functionName: "registerIssuer",
+    args: [
+      emailIssuerAccount.address,
+      "Email Demo Issuer (private)",
+      4n,
+      issuerExpires,
+      ecdsaVerifierAddress,
+      emailBlobUrl,
+    ],
+  });
+
+  await call({
+    from: daoAccount.address,
+    to: registryAddress,
+    abi: IssuerRegistryABI,
+    functionName: "registerIssuer",
+    args: [
+      privateAgeIssuerAccount.address,
+      "Age Demo Issuer (private)",
+      8n,
+      issuerExpires,
+      zkVerifierAddress,
+      ageBlobUrl,
     ],
   });
 
@@ -440,6 +582,46 @@ export async function runSetup(
     ],
   });
 
+  await call({
+    from: emailIssuerAccount.address,
+    to: controllerAddress,
+    abi: VerifiableRecordControllerABI,
+    functionName: "issueRecord",
+    args: [
+      {
+        node: emailRequest.node,
+        ensName: emailRequest.ensName,
+        resolver: emailRequest.resolver,
+        recordType: emailRequest.recordType,
+        recordDataHash: emailRequest.recordDataHash,
+        issuer: emailRequest.issuer,
+        expires: emailRequest.expires,
+        nonce: emailRequest.nonce,
+      },
+      emailUserSig,
+    ],
+  });
+
+  await call({
+    from: privateAgeIssuerAccount.address,
+    to: controllerAddress,
+    abi: VerifiableRecordControllerABI,
+    functionName: "issueRecord",
+    args: [
+      {
+        node: ageRequest.node,
+        ensName: ageRequest.ensName,
+        resolver: ageRequest.resolver,
+        recordType: ageRequest.recordType,
+        recordDataHash: ageRequest.recordDataHash,
+        issuer: ageRequest.issuer,
+        expires: ageRequest.expires,
+        nonce: ageRequest.nonce,
+      },
+      ageUserSig,
+    ],
+  });
+
   // ── Step 7: Done ─────────────────────────────────────────────────────────
 
   onProgress(7, TOTAL_STEPS, "Setup complete!");
@@ -467,6 +649,38 @@ export async function runSetup(
         label: "ZK Issuer",
       },
     ],
+    privateRecords: [
+      {
+        type: "email",
+        label: "Email (value hidden)",
+        recordType: EMAIL_RECORD_TYPE,
+        issuerAddress: emailIssuerAccount.address,
+        verifierContract: ecdsaVerifierAddress,
+        specificationURI: emailBlobUrl,
+        recordDataHash: emailRecordDataHash,
+        publicModel: "redacted",
+        redactedBundle: emailRedacted,
+        secret: { kind: "keccak", data: EMAIL_VALUE, salt: emailSalt },
+      },
+      {
+        type: "age",
+        label: "Age ≥ 18 (ZK predicate)",
+        recordType: PRIVATE_AGE_RECORD_TYPE,
+        issuerAddress: privateAgeIssuerAccount.address,
+        verifierContract: zkVerifierAddress,
+        specificationURI: ageBlobUrl,
+        recordDataHash: zkRecordDataHash,
+        publicModel: "predicate",
+        predicateLabel: "Age ≥ 18",
+        secret: {
+          kind: "poseidon",
+          data: "2000-01-01",
+          birthday: ZK_BIRTHDAY,
+          saltDecimal: zkSalt,
+        },
+      },
+    ],
+    userAccount,
   };
 
   return { config, client };

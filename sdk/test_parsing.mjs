@@ -1,4 +1,4 @@
-import { parseRecordValue, buildRecordKey } from './src/utils.js';
+import { parseRecordValue, buildRecordKey } from './dist/utils.js';
 
 // Test parsing per spec Section 3
 // Value format: "{contentKey} {expires}" separated by single space

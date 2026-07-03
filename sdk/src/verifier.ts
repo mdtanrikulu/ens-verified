@@ -1,5 +1,6 @@
 import type { Address, Hex, PublicClient, Transport, Chain } from "viem";
 import { recoverTypedDataAddress, decodeAbiParameters } from "viem";
+import { namehash } from "viem/ens";
 import type {
   RecordRequest,
   ProofBundle,
@@ -13,6 +14,8 @@ import {
   parseRecordValue as parseRecordValueUtil,
   buildRecordKey,
   validateProofBundle,
+  expandSpecificationURI,
+  assertCanonicalSignature,
 } from "./utils.js";
 import { getEIP712TypedData } from "./issuer.js";
 
@@ -101,8 +104,11 @@ const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
 const AR_GATEWAY = "https://arweave.net/";
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_BUNDLE_BYTES = 1_000_000; // 1 MB hard cap on the bundle body
-const UINT64_MAX = (1n << 64n) - 1n;
-const UINT256_MAX = (1n << 256n) - 1n;
+export const UINT64_MAX = (1n << 64n) - 1n;
+export const UINT256_MAX = (1n << 256n) - 1n;
+
+/** ENSIP-PRIVACY §7: an on-chain provider signals a private record with recordDataHash == bytes32(0). */
+export const PRIVATE_RECORD_SENTINEL: Hex = `0x${"0".repeat(64)}`;
 
 /**
  * Translates content-addressed URIs to an HTTPS gateway. `ipfs://{cid}/{path}` and
@@ -190,7 +196,7 @@ async function readBoundedJson(response: Response, maxBytes: number): Promise<an
 }
 
 /** Parses a non-negative decimal value (string or integer number) to a bounded bigint. */
-function asDecimalBigInt(v: unknown, field: string, max: bigint): bigint {
+export function asDecimalBigInt(v: unknown, field: string, max: bigint): bigint {
   if (typeof v === "number" && Number.isInteger(v) && v >= 0) v = String(v);
   if (typeof v !== "string" || !/^\d+$/.test(v)) {
     throw new Error(`Invalid proof bundle: ${field} must be a non-negative decimal value`);
@@ -268,6 +274,18 @@ export async function fetchProofBundle(
   specificationURI: string,
   options: FetchProofBundleOptions = {}
 ): Promise<ProofBundle> {
+  return parseProofBundle(await fetchBundleJson(specificationURI, options));
+}
+
+/**
+ * Hardened raw-JSON transport shared by {@link fetchProofBundle} and the privacy module's
+ * redacted-bundle fetcher: gateway resolution, SSRF scheme/host allowlist, 10s timeout,
+ * 1 MB body cap. Performs NO schema validation — callers parse the result themselves.
+ */
+export async function fetchBundleJson(
+  specificationURI: string,
+  options: FetchProofBundleOptions = {}
+): Promise<any> {
   const url = normalizeFetchUri(
     specificationURI,
     options.ipfsGateway ?? IPFS_GATEWAY,
@@ -278,7 +296,6 @@ export async function fetchProofBundle(
   const doFetch = options.fetchImpl ?? fetch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let data: any;
   try {
     const response = await doFetch(url, { signal: controller.signal });
     if (!response.ok) {
@@ -286,12 +303,10 @@ export async function fetchProofBundle(
         `Failed to fetch proof bundle from ${specificationURI}: ${response.status} ${response.statusText}`
       );
     }
-    data = await readBoundedJson(response, MAX_BUNDLE_BYTES);
+    return await readBoundedJson(response, MAX_BUNDLE_BYTES);
   } finally {
     clearTimeout(timer);
   }
-
-  return parseProofBundle(data);
 }
 
 /**
@@ -317,6 +332,10 @@ export async function recoverRecordSigner(
   controllerAddress: Address,
   chainId: number
 ): Promise<Address> {
+  // Reject non-65-byte / high-s / bad-v signatures before recovery, mirroring the
+  // contract (viem's recover is laxer than OpenZeppelin ECDSA) — L-5.
+  assertCanonicalSignature(userSignature);
+
   const typedData = getEIP712TypedData(request, controllerAddress, chainId);
 
   return recoverTypedDataAddress({
@@ -399,13 +418,15 @@ export interface VerifyRecordParams {
 }
 
 /**
- * Full verification pipeline:
- * 1. getIssuerInfo — fail fast if issuer is not registered/active, get specificationURI
+ * Full verification pipeline (ENSIP.md Section 7):
+ * 1. getIssuerInfo — fail fast if issuer is not registered/active/unexpired, get specificationURI
  * 2. resolveRecord — read the text record from the resolver
- * 3. parseRecordValue — parse contentKey, expires
+ * 3. parseRecordValue — parse contentKey, expires; check expiration
  * 4. fetchProofBundle — fetch the off-chain proof bundle from issuer's specificationURI
- * 5. verifyContentKey — recompute and compare contentKey
- * 6. recoverRecordSigner + owner check — verify the signer is the current name owner
+ * 5. cross-check — bind bundle.request to the queried node/name/type/issuer/resolver/expires
+ * 6. verifyContentKey — recompute and compare contentKey
+ * 7. verifyProof — call the issuer's verifier contract
+ * 8. recoverRecordSigner + owner check — verify the signer is the current name owner
  *
  * Returns a VerificationResult with granular status for each check.
  */
@@ -418,18 +439,22 @@ export async function verifyRecord(
     contentKeyMatch: false,
     proofValid: false,
     issuerActive: false,
+    bundleMatchesQuery: false,
     signerIsOwner: false,
     expired: false,
   };
 
-  // Step 1: Get issuer info — fail fast if not registered, inactive, or missing specificationURI
+  // Step 1: Get issuer info — fail fast if not registered, inactive, expired,
+  // or missing specificationURI. Mirrors on-chain isActiveIssuer: registered,
+  // active (pauseIssuer also clears this on a DAO pause), and not expired.
   const issuerInfo = await getIssuerInfo(
     client,
     params.registryAddress,
     params.issuer
   );
 
-  if (!issuerInfo || !issuerInfo.active) {
+  const nowSecondsIssuer = BigInt(Math.floor(Date.now() / 1000));
+  if (!issuerInfo || !issuerInfo.active || issuerInfo.expires <= nowSecondsIssuer) {
     return result;
   }
 
@@ -492,19 +517,50 @@ export async function verifyRecord(
         args: [params.node, params.recordType],
       });
       bundle = decodeProofBundle(rawBundle as Hex);
+      // ENSIP-PRIVACY §7: recordDataHash == bytes32(0) marks a private record. The
+      // public verification path consumes recordDataHash and MUST be refused —
+      // verify such records via the disclosure flow (privacy module) instead.
+      if (bundle.request.recordDataHash === PRIVATE_RECORD_SENTINEL) {
+        return result;
+      }
       const structural = validateProofBundle(bundle);
       if (!structural.valid) {
         return result;
       }
     } else {
+      // Expand per-record {node}/{recordType} URI template placeholders (ENSIP.md §8).
       // fetchProofBundle already runs validateProofBundle and throws on failure.
-      bundle = await fetchProofBundle(issuerInfo.specificationURI);
+      bundle = await fetchProofBundle(
+        expandSpecificationURI(issuerInfo.specificationURI, params.node, params.recordType)
+      );
     }
   } catch {
     return result;
   }
 
-  // Step 5: Verify contentKey matches. If this fails, the bundle does not correspond
+  // Step 5: Cross-check the bundle against the queried record (ENSIP.md §7, step 6).
+  // The content key commits to neither node nor recordType, so without these
+  // equalities a bundle for a *different* record owned by the same signer (another
+  // name, or another record type sharing the same recordDataHash) recomputes to a
+  // matching content key and verifies circularly. The signed request.expires is
+  // authoritative over the owner-writable on-chain value.
+  try {
+    result.bundleMatchesQuery =
+      bundle.request.node.toLowerCase() === params.node.toLowerCase() &&
+      namehash(bundle.request.ensName).toLowerCase() === params.node.toLowerCase() &&
+      bundle.request.recordType === params.recordType &&
+      bundle.request.issuer.toLowerCase() === params.issuer.toLowerCase() &&
+      bundle.request.resolver.toLowerCase() === params.resolverAddress.toLowerCase() &&
+      bundle.request.expires === parsed.expires;
+  } catch {
+    result.bundleMatchesQuery = false; // namehash throws on malformed names
+  }
+
+  if (!result.bundleMatchesQuery) {
+    return result;
+  }
+
+  // Step 6: Verify contentKey matches. If this fails, the bundle does not correspond
   // to the on-chain record — short-circuit rather than consult the issuer's
   // verifierContract with data that is already known not to match.
   result.contentKeyMatch = verifyContentKey(
@@ -517,7 +573,7 @@ export async function verifyRecord(
     return result;
   }
 
-  // Proof verification: call the issuer's verifierContract on-chain.
+  // Step 7: Proof verification — call the issuer's verifierContract on-chain.
   try {
     result.proofValid = await client.readContract({
       address: issuerInfo.verifierContract,
@@ -533,7 +589,7 @@ export async function verifyRecord(
     return result;
   }
 
-  // Step 6: Recover the signer and verify they are the current name owner
+  // Step 8: Recover the signer and verify they are the current name owner
   try {
     const signer = await recoverRecordSigner(
       bundle.request,
@@ -559,6 +615,7 @@ export async function verifyRecord(
     result.contentKeyMatch &&
     result.proofValid &&
     result.issuerActive &&
+    result.bundleMatchesQuery &&
     result.signerIsOwner &&
     !result.expired;
 

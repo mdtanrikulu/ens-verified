@@ -12,6 +12,9 @@ contract IssuerRegistry is IIssuerRegistry {
     uint256 public constant ROLE_ISSUER_PAUSER = 1 << 1;
     uint256 public constant ROLE_SPEC_UPDATER = 1 << 2;
 
+    /// @dev Mask of every defined role bit; grant/revoke reject anything outside it (L-12).
+    uint256 private constant ALL_ROLES = ROLE_ISSUER_ADMIN | ROLE_ISSUER_PAUSER | ROLE_SPEC_UPDATER;
+
     // ── Storage ─────────────────────────────────────────────────────────
     mapping(address => uint256) private _roles;
     mapping(address => IssuerInfo) private _issuers;
@@ -35,6 +38,7 @@ contract IssuerRegistry is IIssuerRegistry {
     error InvalidExpiry();
     error LastAdminProtected();
     error DaoPaused();
+    error InvalidRoles();
 
     // ── Modifiers ───────────────────────────────────────────────────────
     modifier onlyRole(uint256 role) {
@@ -52,15 +56,21 @@ contract IssuerRegistry is IIssuerRegistry {
 
     // ── Role management ─────────────────────────────────────────────────
     function grantRoles(address account, uint256 roles) external onlyRole(ROLE_ISSUER_ADMIN) {
+        if (roles & ~ALL_ROLES != 0) revert InvalidRoles();
+
         uint256 current = _roles[account];
         uint256 newlyGranted = roles & ~current;
         if (newlyGranted != 0) {
             _roles[account] = current | newlyGranted;
             _incrementRoleCounts(newlyGranted);
+
+            emit RolesGranted(account, newlyGranted);
         }
     }
 
     function revokeRoles(address account, uint256 roles) external onlyRole(ROLE_ISSUER_ADMIN) {
+        if (roles & ~ALL_ROLES != 0) revert InvalidRoles();
+
         uint256 current = _roles[account];
         uint256 actuallyRevoked = roles & current;
         if (actuallyRevoked == 0) return;
@@ -72,6 +82,8 @@ contract IssuerRegistry is IIssuerRegistry {
 
         _roles[account] = current & ~actuallyRevoked;
         _decrementRoleCounts(actuallyRevoked);
+
+        emit RolesRevoked(account, actuallyRevoked);
     }
 
     function _incrementRoleCounts(uint256 rolesMask) internal {
@@ -152,6 +164,27 @@ contract IssuerRegistry is IIssuerRegistry {
         _issuers[issuer].expires = newExpiry;
 
         emit IssuerRenewed(issuer, newExpiry);
+    }
+
+    /// @notice Replace an issuer's specificationURI. Gated by ROLE_SPEC_UPDATER so bundle
+    ///         hosting can migrate (e.g., HTTPS → IProofBundleProvider) without re-registration.
+    function updateSpecificationURI(address issuer, string calldata newURI) external onlyRole(ROLE_SPEC_UPDATER) {
+        if (!_registered[issuer]) revert NotRegistered();
+
+        _issuers[issuer].specificationURI = newURI;
+
+        emit SpecificationURIUpdated(issuer, newURI);
+    }
+
+    /// @notice Replace an issuer's verifier contract. Admin-gated: this changes what counts
+    ///         as a valid proof for every record the issuer has outstanding.
+    function updateVerifierContract(address issuer, address newVerifier) external onlyRole(ROLE_ISSUER_ADMIN) {
+        if (newVerifier == address(0)) revert ZeroAddress();
+        if (!_registered[issuer]) revert NotRegistered();
+
+        _issuers[issuer].verifierContract = newVerifier;
+
+        emit VerifierContractUpdated(issuer, newVerifier);
     }
 
     /// @notice Allows a registered issuer to toggle their own active status.
