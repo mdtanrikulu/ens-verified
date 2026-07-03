@@ -11,7 +11,7 @@
 
 ## Abstract
 
-This ENSIP defines a protocol by which third-party **issuers** can write cryptographically verifiable attestation records to ENS names using standard text records (EIP-634). Each record contains an on-chain **content key** — a `bytes32` keccak256 binding commitment that ties the record to a specific ENS name, resolver, issuer, and user signature, preventing copy attacks across names. An **Issuer Registry** (which may be DAO-governed or community-managed) controls which addresses may issue records and hosts the URI from which verifiers fetch the off-chain **proof bundle**. Users authorize record creation by signing an EIP-712 typed data message, and verifiers independently validate records by recomputing the content key and checking the proof bundle.
+This ENSIP defines a protocol by which third-party **issuers** can write cryptographically verifiable attestation records to ENS names using standard text records (EIP-634). Each record contains an onchain **content key** — a `bytes32` keccak256 binding commitment that ties the record to a specific ENS name, resolver, issuer, and user signature, preventing copy attacks across names. An **Issuer Registry** (which may be DAO-governed or community-managed) controls which addresses may issue records and hosts the URI from which verifiers fetch the offchain **proof bundle**. Users authorize record creation by signing an EIP-712 typed data message, and verifiers independently validate records by recomputing the content key and checking the proof bundle.
 
 ## Motivation
 
@@ -19,14 +19,14 @@ ENS names serve as a universal namespace for Ethereum identities. Today, the dat
 
 1. **Proves the name owner consented** to the record being written.
 2. **Binds the record to that specific name and resolver**, preventing the credential from being copied to a different name.
-3. **Allows off-chain verification** without requiring the verifier to replay an on-chain transaction.
-4. **Provides a standard revocation path** via an on-chain issuer registry.
+3. **Allows offchain verification** without requiring the verifier to replay an onchain transaction.
+4. **Provides a standard revocation path** via an onchain issuer registry.
 
 Use cases include:
 
 - **Identity verification** -- KYC/KYB providers attesting that a name owner has passed identity checks.
 - **Credential issuance** -- Professional certifications, organizational memberships, or educational credentials linked to an ENS name.
-- **Compliance attestations** -- Regulatory compliance proofs that counterparties can verify on-chain or off-chain.
+- **Compliance attestations** -- Regulatory compliance proofs that counterparties can verify onchain or offchain.
 - **Reputation signals** -- Third-party reputation or trust scores anchored to a name.
 
 This specification provides a minimal, composable framework that leverages existing ENS text records and requires no changes to ENS resolvers.
@@ -45,11 +45,11 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 |------|-----------|
 | **Issuer** | An Ethereum address registered in the Issuer Registry that is authorized to write verifiable records on behalf of users. |
 | **User** | The owner (or controller) of an ENS name who consents to a record being written by signing an EIP-712 message. |
-| **Verifier** | Any party that reads a verifiable record from ENS and validates it against the on-chain content key and off-chain proof bundle. |
-| **Content Key** | A `bytes32` value derived via `keccak256` that cryptographically binds a record to a specific user signature, ENS name, resolver, record data, and issuer. Stored on-chain as the first field of the text record value. |
-| **Proof Bundle** | A document containing the full inputs needed to recompute the content key and verify the issuer's proof. Typically a JSON document stored off-chain at the issuer's `specificationURI`, but MAY also be served on-chain via an `IProofBundleProvider` contract when `specificationURI` is a contract address. |
+| **Verifier** | Any party that reads a verifiable record from ENS and validates it against the onchain content key and offchain proof bundle. |
+| **Content Key** | A `bytes32` value derived via `keccak256` that cryptographically binds a record to a specific user signature, ENS name, resolver, record data, and issuer. Stored onchain as the first field of the text record value. |
+| **Proof Bundle** | A document containing the full inputs needed to recompute the content key and verify the issuer's proof. Typically a JSON document stored offchain at the issuer's `specificationURI`, but MAY also be served onchain via an `IProofBundleProvider` contract when `specificationURI` is a contract address. |
 | **Record Type** | A normalized, lowercase string identifier (e.g., `"identity"`, `"kyc"`, `"credential"`) that categorizes the verifiable record. |
-| **Record Data Hash** | A `bytes32` keccak256 digest of the record payload. The actual payload lives in the proof bundle; only its hash appears on-chain. |
+| **Record Data Hash** | A `bytes32` keccak256 digest of the record payload. The actual payload lives in the proof bundle; only its hash appears onchain. |
 | **Node** | The ENS namehash of the name, as defined in ENSIP-1 (EIP-137). Resolver profiles in ENSv2 remain keyed by node. |
 | **Owner** | The current holder of the ENS name. Under ENSv2, the address obtained by traversing the registry hierarchy from the root registry to the name's parent registry and querying the ownership of the name's token (the traversal implemented by `LibRegistry.findOwner(rootRegistry, dnsEncodedName)` and exposed via the Universal Resolver); `address(0)` if the name is unowned or not found. Owners MAY be smart contracts (see Section 7, step 10). |
 
@@ -297,7 +297,7 @@ Record issuance proceeds as follows. Each step is mandatory unless noted otherwi
     );
     ```
 
-Name ownership is not verified at issuance: the controller checks the user's consent signature but not that the signer currently owns `request.node`. Ownership is checked at verification time (Section 7, step 10), so records issued to a non-owner never verify and records self-invalidate on name transfer. Issuers SHOULD confirm off-chain that the signer owns the name before issuing, to avoid paying gas for records that will never verify.
+Name ownership is not verified at issuance: the controller checks the user's consent signature but not that the signer currently owns `request.node`. Ownership is checked at verification time (Section 7, step 10), so records issued to a non-owner never verify and records self-invalidate on name transfer. Issuers SHOULD confirm offchain that the signer owns the name before issuing, to avoid paying gas for records that will never verify.
 
 #### Revocation
 
@@ -321,7 +321,7 @@ A verifier MUST perform the following steps to validate a verifiable record. All
 
 **Result states.** This flow classifies a record as exactly one of: **VALID** (all steps pass), **INVALID** (a cryptographic or binding check fails, or the issuer is inactive), **EXPIRED** (step 4 or step 6 fails on time), or **STALE** (step 10 ownership mismatch). Verifiers MUST treat EXPIRED and STALE records as not valid; the distinct labels support diagnostics only. The **verification context** below means the tuple the verifier set out to check: the queried `node`, the `resolver` it queried, and the `issuer` and `recordType` taken from the text record key.
 
-1. **Get issuer info.** Call `issuerRegistry.isActiveIssuer(issuer)` — or equivalently call `getIssuer(issuer)` and require all of: the issuer is registered (the call does not revert), the issuer is not paused (`active == true` **and** not DAO-paused, see Section 10), and the issuer has not expired (`expires > currentTimestamp`). If any condition fails, the record is INVALID. This check MUST be performed before fetching any off-chain data. Obtain `specificationURI` and `verifierContract` from `getIssuer(issuer)`.
+1. **Get issuer info.** Call `issuerRegistry.isActiveIssuer(issuer)` — or equivalently call `getIssuer(issuer)` and require all of: the issuer is registered (the call does not revert), the issuer is not paused (`active == true` **and** not DAO-paused, see Section 10), and the issuer has not expired (`expires > currentTimestamp`). If any condition fails, the record is INVALID. This check MUST be performed before fetching any offchain data. Obtain `specificationURI` and `verifierContract` from `getIssuer(issuer)`.
 
 2. **Resolve the text record.** Query the ENS resolver for the text record at key `vr:{issuer}:{recordType}` on the target node.
 
@@ -338,13 +338,13 @@ A verifier MUST perform the following steps to validate a verifiable record. All
    - `request.recordType` equals the `recordType` from the text record key;
    - `request.issuer` equals the `issuer` from the text record key;
    - `request.resolver` equals the resolver the text record was read from;
-   - `request.expires` equals the on-chain `expires` parsed in step 3, and satisfies the step-4 expiration check. The signed `request.expires` takes precedence: the on-chain value lives in an owner-writable text record, and a mismatch means the record value was modified after issuance.
+   - `request.expires` equals the onchain `expires` parsed in step 3, and satisfies the step-4 expiration check. The signed `request.expires` takes precedence: the onchain value lives in an owner-writable text record, and a mismatch means the record value was modified after issuance.
 
    Without these checks, a bundle for a different record — another name owned by the same signer, or another record type sharing the same `recordDataHash` — recomputes to a matching content key: the content key commits to neither `node` nor `recordType`, and the signature digest in steps 7–10 is reconstructed from the bundle's own fields.
 
 7. **Recompute the content key.** Using the `userSignature`, `ensName`, `resolver`, `recordDataHash`, and `issuer` from the proof bundle, recompute the content key as specified in Section 4.
 
-8. **Verify the content key.** Compare the recomputed content key with the on-chain `contentKey`. If they do not match, the record is INVALID. Alternatively, the verifier MAY call the contract's `verifyContentKey` function:
+8. **Verify the content key.** Compare the recomputed content key with the onchain `contentKey`. If they do not match, the record is INVALID. Alternatively, the verifier MAY call the contract's `verifyContentKey` function:
    ```solidity
    function verifyContentKey(
        bytes32 contentKey,
@@ -418,7 +418,7 @@ A single static URL cannot address one bundle per record. Issuers that serve mor
 
 **Example:** `https://issuer.example/bundles/{node}/{recordType}.json`. A `specificationURI` without placeholders identifies a single bundle document and is only appropriate for issuers with exactly one outstanding record; issuers with multiple records MUST use template placeholders or register an `IProofBundleProvider` contract (below), which receives `(node, recordType)` as call parameters.
 
-#### On-Chain Proof Bundle Provider (`IProofBundleProvider`)
+#### onchain Proof Bundle Provider (`IProofBundleProvider`)
 
 The `specificationURI` field in the Issuer Registry can be either:
 
@@ -452,9 +452,9 @@ The returned `bytes` value is `abi.encode(...)` of the following parameters in t
 | `contentKey` | `bytes32` | The derived content key |
 | `proof` | `bytes` | The issuer's proof |
 
-The ABI schema intentionally omits `version` — the on-chain provider path is tied to this ENSIP revision. Future breaking schema revisions MUST either extend the ABI tuple (in a way that decodes without errors for current verifiers) or define a new interface identifier.
+The ABI schema intentionally omits `version` — the onchain provider path is tied to this ENSIP revision. Future breaking schema revisions MUST either extend the ABI tuple (in a way that decodes without errors for current verifiers) or define a new interface identifier.
 
-This supports **CCIP-Read (EIP-3668)**: the provider contract MAY revert with `OffchainLookup` to redirect retrieval to an off-chain gateway. This enables use cases such as L2 storage proofs, where the proof bundle is stored on an L2 chain and fetched via a CCIP-Read gateway without requiring the verifier to interact directly with the L2.
+This supports **CCIP-Read (EIP-3668)**: the provider contract MAY revert with `OffchainLookup` to redirect retrieval to an offchain gateway. This enables use cases such as L2 storage proofs, where the proof bundle is stored on an L2 chain and fetched via a CCIP-Read gateway without requiring the verifier to interact directly with the L2.
 
 Verifiers MUST detect the format of `specificationURI` (contract address vs. URI) and use the appropriate retrieval mechanism. A value matching the case-insensitive regex `^0x[0-9a-fA-F]{40}$` MUST be treated as a contract address; all other values MUST be treated as URIs. Verifiers MUST accept both lowercase and EIP-55 checksummed contract-address forms.
 
@@ -473,7 +473,7 @@ The Issuer Registry tracks each issuer's supported record types as a `uint256` b
 
 An issuer with `supportedRecordTypes = 5` (bits 0 and 2 set) supports `identity` and `compliance` records.
 
-The `supportedRecordTypes` bitmap is informational metadata — it is NOT enforced by the controller during issuance. The controller accepts any `recordType` string from an active issuer. The bitmap exists so that off-chain consumers (UIs, indexers) can filter issuers by capability without parsing record keys. Implementations SHOULD maintain a consistent mapping between bits and string identifiers.
+The `supportedRecordTypes` bitmap is informational metadata — it is NOT enforced by the controller during issuance. The controller accepts any `recordType` string from an active issuer. The bitmap exists so that offchain consumers (UIs, indexers) can filter issuers by capability without parsing record keys. Implementations SHOULD maintain a consistent mapping between bits and string identifiers.
 
 ### 10. Issuer Registry
 
@@ -490,7 +490,7 @@ struct IssuerInfo {
     uint64 registeredAt;                  // Registration timestamp
     uint64 expires;                       // Expiration timestamp
     bool active;                          // Pause flag (see Pause Semantics below — NOT the only pause state)
-    address verifierContract;             // On-chain proof verifier (REQUIRED, cannot be address(0))
+    address verifierContract;             // onchain proof verifier (REQUIRED, cannot be address(0))
     string specificationURI;              // URL or contract address for proof bundle retrieval (see Section 8)
 }
 ```
@@ -499,7 +499,7 @@ In addition to the struct, the registry maintains a separate governance-controll
 
 #### Proof Verification
 
-Every issuer MUST have an on-chain verifier contract. The `registerIssuer` function MUST revert if `verifierContract` is `address(0)`. Verifiers MUST call the issuer's `verifierContract` to validate the `proof` field from the proof bundle.
+Every issuer MUST have an onchain verifier contract. The `registerIssuer` function MUST revert if `verifierContract` is `address(0)`. Verifiers MUST call the issuer's `verifierContract` to validate the `proof` field from the proof bundle.
 
 The verifier contract MUST implement the `IProofVerifier` interface:
 
@@ -518,7 +518,7 @@ This interface is intentionally minimal and generic. It supports any verificatio
 - **ECDSA proof**: Recover the signer from the proof signature and confirm it matches the issuer address.
 - **ZK proof verification**: Verify a zero-knowledge proof against public inputs.
 - **Multisig verification**: Check that the proof contains signatures from a quorum of co-signers.
-- **CCIP-Read (EIP-3668)**: The verifier contract MAY use CCIP-Read to offload computation off-chain while returning the result on-chain.
+- **CCIP-Read (EIP-3668)**: The verifier contract MAY use CCIP-Read to offload computation offchain while returning the result onchain.
 
 The `proof` bytes are opaque to the protocol — their encoding is defined by the specific `IProofVerifier` implementation.
 
@@ -602,13 +602,13 @@ Implementations MAY support alternative authorization mechanisms if the resolver
 
 Verifiable records are standard ENS text records. Any resolver that implements the `text(bytes32 node, string key)` function (as defined in EIP-634) is compatible, including:
 
-- **CCIP-Read (EIP-3668) resolvers** that fetch records from off-chain data sources.
+- **CCIP-Read (EIP-3668) resolvers** that fetch records from offchain data sources.
 - **L2 resolvers** that bridge data from Layer 2 networks.
 - **Wildcard resolvers (ENSIP-10)** that resolve records for subdomains dynamically.
 
 No special bridge logic or resolver modifications are required. The `VerifiableRecordController` writes records via `setText`, and verifiers read them via `text` -- both standard resolver operations.
 
-Additionally, issuers MAY register an `IProofBundleProvider` contract address as their `specificationURI` (see Section 8). This contract can use CCIP-Read to serve proof bundles from L2 storage, enabling a fully on-chain proof retrieval path for cross-chain verification scenarios. The provider contract reverts with `OffchainLookup`, and CCIP-Read-aware clients transparently follow the gateway redirect to fetch the proof bundle from the L2.
+Additionally, issuers MAY register an `IProofBundleProvider` contract address as their `specificationURI` (see Section 8). This contract can use CCIP-Read to serve proof bundles from L2 storage, enabling a fully onchain proof retrieval path for cross-chain verification scenarios. The provider contract reverts with `OffchainLookup`, and CCIP-Read-aware clients transparently follow the gateway redirect to fetch the proof bundle from the L2.
 
 ---
 
@@ -618,9 +618,9 @@ Additionally, issuers MAY register an `IProofBundleProvider` contract address as
 
 Text records (ENSIP-5 / EIP-634) are the most widely supported and flexible record type in ENS. Every major ENS resolver already implements `text()`, and ENSv2 resolvers expose the same profile. By storing verifiable records as text records, this specification requires zero changes to existing resolver infrastructure and benefits from the entire ENS tooling ecosystem (resolution libraries, CCIP-Read, L2 bridges) without modification.
 
-### Why Off-Chain Proofs?
+### Why offchain Proofs?
 
-Storing full proof signatures or zero-knowledge proofs on-chain would be prohibitively expensive and would leak information that some issuance flows (particularly ZK-based ones) are designed to keep private. The content key serves as a constant-size binding commitment: it is small enough to store on-chain (32 bytes, rendered as a 66-character hex string in the text record) while providing the cryptographic anchor needed for off-chain verification.
+Storing full proof signatures or zero-knowledge proofs onchain would be prohibitively expensive and would leak information that some issuance flows (particularly ZK-based ones) are designed to keep private. The content key serves as a constant-size binding commitment: it is small enough to store onchain (32 bytes, rendered as a 66-character hex string in the text record) while providing the cryptographic anchor needed for offchain verification.
 
 ### Why Include the Resolver in the Content Key?
 
@@ -664,11 +664,11 @@ The reference implementation consists of the following components in this reposi
 | `IVerifiableRecordController` | `src/interfaces/IVerifiableRecordController.sol` | Interface definition with events, struct, and function signatures. |
 | `IssuerRegistry` | `src/IssuerRegistry.sol` | Example DAO-governed issuer whitelist with role-based access control and two-flag pause semantics (Section 10). |
 | `IIssuerRegistry` | `src/interfaces/IIssuerRegistry.sol` | Interface definition for the issuer registry. |
-| `IProofVerifier` | `src/interfaces/IProofVerifier.sol` | Standard interface for on-chain proof verification. |
-| `IProofBundleProvider` | `src/interfaces/IProofBundleProvider.sol` | Interface for on-chain proof bundle retrieval (supports CCIP-Read for L2 storage proofs). |
+| `IProofVerifier` | `src/interfaces/IProofVerifier.sol` | Standard interface for onchain proof verification. |
+| `IProofBundleProvider` | `src/interfaces/IProofBundleProvider.sol` | Interface for onchain proof bundle retrieval (supports CCIP-Read for L2 storage proofs). |
 | `ITextResolver` | `src/interfaces/ITextResolver.sol` | Minimal resolver interface (`setText`/`text`) the controller writes through. |
 | `ECDSAProofVerifier` | `src/verifiers/ECDSAProofVerifier.sol` | Reference `IProofVerifier` implementation using domain-bound ECDSA signature recovery. |
-| `ZkAgeVerifier` | `src/verifiers/ZkAgeVerifier.sol` | `IProofVerifier` adapter for Groth16 age-verification proofs over a salted Poseidon commitment (see the Selective Disclosure extension). |
+| `ZkAgeVerifier` | `src/verifiers/ZkAgeVerifier.sol` | Example `IProofVerifier` adapter for Groth16 age-verification proofs over a salted Poseidon commitment (see the Selective Disclosure extension). Not normative — issuers MAY register any `IProofVerifier`. |
 | `Groth16Verifier` | `src/verifiers/Groth16Verifier.sol` | snarkjs-generated Groth16 verifier backing `ZkAgeVerifier` (demo-grade trusted setup). |
 | ZK circuits | `circuits/` | Circom circuits for the salted age-verification commitment. |
 | TypeScript SDK | `sdk/` | Client library implementing the issuance and verification flows (Sections 6–7). |
@@ -707,20 +707,20 @@ When an ENS name is transferred to a new owner, existing verifiable records beco
 
 ### Record Value Tampering
 
-The text record value (`{contentKey} {expires}`) lives in owner-writable resolver storage. The content key half is protected by recomputation (Section 7, steps 7–8), but the `expires` half carries no independent commitment. Section 7, step 6 therefore requires verifiers to compare the on-chain `expires` against the signed `request.expires` from the proof bundle and reject on mismatch. A verifier that trusts the on-chain `expires` alone allows the name owner to extend an expired attestation indefinitely.
+The text record value (`{contentKey} {expires}`) lives in owner-writable resolver storage. The content key half is protected by recomputation (Section 7, steps 7–8), but the `expires` half carries no independent commitment. Section 7, step 6 therefore requires verifiers to compare the onchain `expires` against the signed `request.expires` from the proof bundle and reject on mismatch. A verifier that trusts the onchain `expires` alone allows the name owner to extend an expired attestation indefinitely.
 
 ### Issuer Revocation
 
 The Issuer Registry provides multiple mechanisms to disable a compromised or misbehaving issuer:
 
-- **Pausing**: Temporarily prevents the issuer from writing new records. Existing records remain on-chain but verifiers SHOULD check issuer status. A governance pause (`pauseIssuer`) cannot be reversed by the issuer — `setSelfActive(true)` reverts while `daoPaused` is set (see Section 10, Pause Semantics).
+- **Pausing**: Temporarily prevents the issuer from writing new records. Existing records remain onchain but verifiers SHOULD check issuer status. A governance pause (`pauseIssuer`) cannot be reversed by the issuer — `setSelfActive(true)` reverts while `daoPaused` is set (see Section 10, Pause Semantics).
 - **Self-deactivation**: Issuers can call `setSelfActive(false)` to immediately deactivate themselves without DAO intervention. This serves as an emergency kill switch -- for example, if an issuer detects a key compromise, it can self-deactivate before the DAO responds.
 - **Revocation**: Permanently removes the issuer. The `IssuerRevoked` event includes a reason string for audit purposes.
 - **Expiration**: Issuers have a built-in expiration timestamp. Expired issuers are treated as inactive.
 
-### Off-Chain Data Availability & Link Rot
+### offchain Data Availability & Link Rot
 
-Proof bundles are stored off-chain at the issuer's `specificationURI`. If the proof bundle becomes unavailable, the record cannot be independently verified (though the on-chain content key still exists), resulting in a "Schrödinger's Attestation" — dead weight on the blockchain. To prevent link rot, availability requirements scale with record lifetime:
+Proof bundles are stored offchain at the issuer's `specificationURI`. If the proof bundle becomes unavailable, the record cannot be independently verified (though the onchain content key still exists), resulting in a "Schrödinger's Attestation" — dead weight on the blockchain. To prevent link rot, availability requirements scale with record lifetime:
 
 - For short-lived records (hours to weeks), standard HTTPS hosting is acceptable.
 - For medium-lived records (months), content-addressed storage (IPFS, Arweave) is RECOMMENDED.
@@ -736,9 +736,9 @@ Verifiers observing multiple historical `VerifiableRecordSet` events for the sam
 
 ### Low-Entropy Payloads
 
-The on-chain `contentKey` and the publicly-served `userSignature` are both deterministic functions of `recordDataHash`. Either value can be used as an offline oracle for brute-force recovery of the underlying record data when the payload is drawn from a small or enumerable space — email addresses, phone numbers, legal names, or similar personal identifiers typically have 20–40 bits of effective entropy, exhaustible in seconds to hours on commodity hardware.
+The onchain `contentKey` and the publicly-served `userSignature` are both deterministic functions of `recordDataHash`. Either value can be used as an offline oracle for brute-force recovery of the underlying record data when the payload is drawn from a small or enumerable space — email addresses, phone numbers, legal names, or similar personal identifiers typically have 20–40 bits of effective entropy, exhaustible in seconds to hours on commodity hardware.
 
-Issuers whose records carry such payloads SHOULD adopt the Selective Disclosure extension (ENSIP-TBD Privacy) rather than this base specification. The extension introduces a mandatory per-record salt and a redacted proof bundle so that neither the on-chain content key nor the public signature forms an exploitable oracle. Deployments that intentionally publish low-entropy facts (e.g., public username attestations) are not subject to this recommendation.
+Issuers whose records carry such payloads SHOULD adopt the Selective Disclosure extension (ENSIP-TBD Privacy) rather than this base specification. The extension introduces a mandatory per-record salt and a redacted proof bundle so that neither the onchain content key nor the public signature forms an exploitable oracle. Deployments that intentionally publish low-entropy facts (e.g., public username attestations) are not subject to this recommendation.
 
 Records whose `recordDataHash` is taken over a genuinely high-entropy preimage (a random attestation ID, a content hash, or a salted/blinded commitment) are not affected by this concern. A commitment is high-entropy only if its **preimage** is. A hash or ZK commitment computed directly over a low-entropy value — for example `Poseidon(birthday)` or `keccak256(email)` — remains fully brute-forceable: the attacker enumerates candidate inputs and recomputes the commitment, exactly as for an unhashed payload. Such commitments (including ZK proof commitments) MUST incorporate a high-entropy per-record salt into the preimage to qualify as high-entropy — see ENSIP-TBD Privacy, "ZK Commitment Blinding", for the salt sizing rules per commitment scheme. Do not assume "it's a hash/ZK commitment" implies "it's safe."
 
@@ -769,7 +769,7 @@ Revoking a record requires the issuer to pay gas to clear the storage slot (sett
 
 ### Trust Model
 
-The on-chain infrastructure guarantees:
+The onchain infrastructure guarantees:
 
 1. The user consented (valid EIP-712 signature).
 2. The issuer was authorized at issuance time (active in the registry).
@@ -790,9 +790,9 @@ Migration difficulty is asymmetric, and the architecture already isolates the ea
 - **Issuer proofs are pluggable and require no protocol change.** `IProofVerifier.verifyProof` takes the proof as opaque `bytes`, and each issuer names its own `verifierContract`. A post-quantum scheme (a STARK verifier, or a lattice-signature verifier) is adopted by deploying a new verifier and updating the issuer's registration against it (`updateVerifierContract`, Section 10) — `IssuerRegistry` and `VerifiableRecordController` are untouched.
 - **User authentication is bound to ECDSA and is the hard part.** The controller verifies `userSignature` via `ECDSA.recover`, and `contentKey` binds the raw signature bytes. Whether future migration is a configuration change or a redeployment hinges on one hook: **if the controller validates `userSignature` via ERC-1271 (`isValidSignature`) in addition to `ecrecover`, a name owner can migrate to a post-quantum smart-contract account and the controller needs no change** — signature validity is delegated to the account, and the ownership check follows Ethereum's own account upgrade automatically. Without ERC-1271 support, post-quantum user signatures require a controller change. Implementations that wish to be forward-compatible SHOULD support ERC-1271 signer validation now (see Contract-Owned Names).
 - **Non-upgradeable contracts raise the cost of the bound path.** The reference contracts are deployed directly (no proxy), so any change to the signature-verification path is a redeployment plus re-issuance of existing records, not an in-place upgrade.
-- **Large post-quantum signatures** (e.g. Dilithium ≈ 2.4 KB) hash into `contentKey` without correctness issues, but increase calldata/storage cost and affect any off-chain path (including the Selective Disclosure `Disclosure` signature) that assumes ECDSA recovery.
+- **Large post-quantum signatures** (e.g. Dilithium ≈ 2.4 KB) hash into `contentKey` without correctness issues, but increase calldata/storage cost and affect any offchain path (including the Selective Disclosure `Disclosure` signature) that assumes ECDSA recovery.
 
-Because the on-chain records and public proof bundles are permanent, deployments handling private or long-lived data SHOULD also account for **harvest-now-decrypt-later**: material transmitted today over classical TLS (and any confidentiality resting on classical key exchange) may be broken retroactively by a future quantum adversary.
+Because the onchain records and public proof bundles are permanent, deployments handling private or long-lived data SHOULD also account for **harvest-now-decrypt-later**: material transmitted today over classical TLS (and any confidentiality resting on classical key exchange) may be broken retroactively by a future quantum adversary.
 
 ---
 

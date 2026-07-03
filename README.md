@@ -1,13 +1,13 @@
 # ENS Verifiable Records
 
-Cryptographically-bound verifiable records for ENS (targeting **ENSv2**). An issuer registry (DAO-governed or community-managed) controls which entities may write records into user resolvers. Records are made tamper-evident and non-transferable by deriving content keys from the user's signature, ENS name, resolver address, record payload, and issuer identity. Proof verification is always on-chain via issuer-registered verifier contracts.
+Cryptographically-bound verifiable records for ENS (targeting **ENSv2**). An issuer registry (DAO-governed or community-managed) controls which entities may write records into user resolvers. Records are made tamper-evident and non-transferable by deriving content keys from the user's signature, ENS name, resolver address, record payload, and issuer identity. Proof verification is always onchain via issuer-registered verifier contracts.
 
 ## Specifications
 
 | Document | Scope |
 |----------|-------|
 | [ENSIP.md](./ENSIP.md) | Base spec: record key/value format, content key derivation, EIP-712 consent, issuance & verification flows, proof bundles, issuer registry. |
-| [ENSIP-PRIVACY.md](./ENSIP-PRIVACY.md) | Selective Disclosure extension: salted `recordDataHash`, redacted proof bundles, ZK commitment blinding, off-chain user→vendor disclosure flow. |
+| [ENSIP-PRIVACY.md](./ENSIP-PRIVACY.md) | Selective Disclosure extension: salted `recordDataHash`, redacted proof bundles, ZK commitment blinding, offchain user -> vendor disclosure flow. |
 
 ## Repository Layout
 
@@ -25,28 +25,35 @@ docs/           Supplementary docs (zk-email issuer design)
 
 ```
 Issuer Registry Governance (e.g. ENS DAO)
-  └── IssuerRegistry              (on-chain: approved issuers, verifier contracts, specificationURI)
-        └── Authorized Issuer      (off-chain: validates identity, signs proof, hosts proof bundle)
-              ├── IProofVerifier    (on-chain: verifies proof — ECDSA, ZK, multisig, CCIP-Read)
-              └── VerifiableRecordController  (on-chain: derives key, writes resolver)
-                    └── User Resolver          (on-chain: stores content key + expiry)
+  └── IssuerRegistry              (onchain: approved issuers, verifier contracts, specificationURI)
+        └── Authorized Issuer      (offchain: validates identity, signs proof, hosts proof bundle)
+              ├── IProofVerifier    (onchain: verifies proof — ECDSA, ZK, multisig, CCIP-Read)
+              └── VerifiableRecordController  (onchain: derives key, writes resolver)
+                    └── User Resolver          (onchain: stores content key + expiry)
                           └── Verifier          (reads chain + proof bundle, verifies)
 ```
+
+Protocol contracts (specified by [ENSIP.md](./ENSIP.md)):
 
 | Contract | Purpose |
 |----------|---------|
 | `IssuerRegistry` | Governed whitelist of authorized issuers with bitmap roles, expiry, two-flag pause (issuer self-pause vs irreversible-by-issuer DAO pause), revoke |
 | `VerifiableRecordController` | EIP-712 signature validation, content key derivation, resolver text record writes |
-| `IProofVerifier` | Standard interface for on-chain proof verification (ECDSA, ZK, multisig, CCIP-Read) |
-| `ECDSAProofVerifier` | Reference `IProofVerifier` using domain-bound ECDSA recovery (`recordDataHash, issuer, chainId, verifier`) |
-| `ZkAgeVerifier` | `IProofVerifier` adapter for Groth16 age proofs over a **salted** Poseidon commitment (`Poseidon(birthday, salt)`) |
-| `Groth16Verifier` | snarkjs-generated Groth16 verifier backing `ZkAgeVerifier` (demo-grade trusted setup — not for production) |
-| `IProofBundleProvider` | Optional interface for on-chain proof bundle retrieval (L2 storage proofs via CCIP-Read) |
+| `IProofVerifier` | Standard interface for onchain proof verification — each issuer plugs in its own implementation (ECDSA, ZK, multisig, CCIP-Read) |
+| `IProofBundleProvider` | Optional interface for onchain proof bundle retrieval (L2 storage proofs via CCIP-Read) |
 | `ITextResolver` | Minimal `setText`/`text` resolver interface the controller writes through |
+
+Example `IProofVerifier` implementations (reference code in this repo — **not part of the spec**; issuers can register any contract implementing the interface):
+
+| Contract | Purpose |
+|----------|---------|
+| `ECDSAProofVerifier` | Reference implementation using domain-bound ECDSA recovery (`recordDataHash, issuer, chainId, verifier`) |
+| `ZkAgeVerifier` | Example adapter for Groth16 age proofs over a **salted** Poseidon commitment (`Poseidon(birthday, salt)`) — the worked example for the privacy extension's predicate records |
+| `Groth16Verifier` | snarkjs-generated Groth16 verifier backing `ZkAgeVerifier` (demo-grade trusted setup — not for production) |
 
 Every issuer MUST register a `verifierContract` that implements `IProofVerifier`. The registry rejects `address(0)`.
 
-Proof bundles (containing the full verification inputs) are hosted at the issuer's `specificationURI` — a URL (`https://`, `ipfs://`, with `{node}`/`{recordType}` template placeholders for per-record addressing) or a contract address implementing `IProofBundleProvider` for on-chain retrieval.
+Proof bundles (containing the full verification inputs) are hosted at the issuer's `specificationURI` — a URL (`https://`, `ipfs://`, with `{node}`/`{recordType}` template placeholders for per-record addressing) or a contract address implementing `IProofBundleProvider` for onchain retrieval.
 
 ## Content Key Derivation
 
@@ -134,9 +141,9 @@ Steps (full normative flow in [ENSIP.md §7](./ENSIP.md)):
 4. **Fetch** the proof bundle from the issuer's `specificationURI`:
    - If URL (`https://`, `ipfs://`): expand `{node}`/`{recordType}` placeholders, fetch JSON (hardened: scheme allowlist, size cap, timeout — see ENSIP.md Security Considerations, "Proof Bundle Fetching").
    - If contract address (`0x...`, 42 chars): call `IProofBundleProvider.getProofBundle(node, recordType)` and ABI-decode. Supports CCIP-Read for L2 storage proofs.
-5. **Cross-check** the bundle against the queried record: `request.node`, `namehash(request.ensName)`, `request.recordType`, `request.issuer`, `request.resolver` must match the query, and the **signed** `request.expires` must equal the on-chain value (the on-chain field is owner-writable; the signed one is authoritative).
-6. **Recompute** the content key from the proof bundle's public inputs. Must match on-chain.
-7. **Verify the proof** by calling `verifierContract.verifyProof(proof, recordDataHash, issuer)` on the issuer's registered verifier contract. This is always on-chain (`view` call, no gas cost for off-chain callers). Supports any verification mechanism: ECDSA recovery, ZK proof verification, multisig, CCIP-Read.
+5. **Cross-check** the bundle against the queried record: `request.node`, `namehash(request.ensName)`, `request.recordType`, `request.issuer`, `request.resolver` must match the query, and the **signed** `request.expires` must equal the onchain value (the onchain field is owner-writable; the signed one is authoritative).
+6. **Recompute** the content key from the proof bundle's public inputs. Must match onchain.
+7. **Verify the proof** by calling `verifierContract.verifyProof(proof, recordDataHash, issuer)` on the issuer's registered verifier contract. This is always onchain (`view` call, no gas cost for offchain callers). Supports any verification mechanism: ECDSA recovery, ZK proof verification, multisig, CCIP-Read.
 8. **Verify ownership**: resolve the current owner of the queried node through the ENSv2 registry hierarchy, then validate the EIP-712 user signature against it (ECDSA recovery for EOAs, ERC-1271 for contract owners). A mismatch means the record belongs to a previous owner.
 
 If all checks pass, the record is valid.
@@ -145,10 +152,10 @@ If all checks pass, the record is valid.
 
 For records over low-entropy private data (emails, phone numbers, birthdates), [ENSIP-PRIVACY.md](./ENSIP-PRIVACY.md) adds:
 
-- a mandatory high-entropy per-record **salt** in the `recordDataHash` preimage, so neither the on-chain content key nor the public signature can be brute-forced offline;
+- a mandatory high-entropy per-record **salt** in the `recordDataHash` preimage, so neither the onchain content key nor the public signature can be brute-forced offline;
 - a **redacted public bundle** (`"version": "1-private"`, `recordDataHash: null`) that legacy verifiers deterministically reject;
-- an EIP-712 **disclosure signature** binding each off-chain reveal to a specific node, issuer, record type, vendor, and single-use nonce;
-- **ZK predicate records** (e.g. "over 18" via `Poseidon(birthday, salt)` + Groth16) that prove properties without revealing values — see `circuits/` and `ZkAgeVerifier`.
+- an EIP-712 **disclosure signature** binding each offchain reveal to a specific node, issuer, record type, vendor, and single-use nonce;
+- **ZK predicate records**: proofs of properties (e.g. "over 18") over blinded commitments, without revealing values. The commitment scheme is what the spec defines; this repo's `circuits/` + `ZkAgeVerifier` are one example implementation of it.
 
 The full disclosure flow is implemented in the SDK (`sdk/src/privacy.ts` — salted hashes, redacted bundles, the EIP-712 `Disclosure` signature, vendor-side verification, and the §3 public path); the demo consumes those exports and keeps only the Poseidon commitment helpers and brute-force visualizations.
 
